@@ -144,8 +144,13 @@ if "code" in params and "credentials" not in st.session_state:
 # ── Page setup ───────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Speech2Summary", page_icon="🎙️", layout="centered")
-st.title("Mon Assistant Perso")
-st.caption("Enregistrez ou téléversez un fichier audio → transcription → création d'un résumé structuré")
+col_title, col_btn = st.columns([4, 1])
+with col_title:
+    st.title("Mon Assistant Perso")
+    st.caption("Enregistrez ou téléversez un fichier audio → transcription → création d'un résumé structuré")
+with col_btn:
+    st.write("")  # alignement vertical
+    btn_nouveau = st.empty()
 
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
@@ -161,7 +166,6 @@ with st.sidebar:
     auto_transcribe = st.checkbox("Résumer automatiquement", value=True)
     include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
     drive_configured = all(k in st.secrets for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
-    st.caption(f"Drive configuré : {drive_configured} | Clés présentes : {[k for k in ('GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_REDIRECT_URI') if k in st.secrets]}")
     if drive_configured:
         st.divider()
         if "credentials" in st.session_state:
@@ -180,11 +184,16 @@ with st.sidebar:
 tab_record, tab_upload = st.tabs(["Enregistrer", "Envoyer un fichier audio"])
 
 with tab_record:
-    audio_input = st.audio_input("Cliquez pour enregistrer depuis votre micro", key=f"rec_{rk}")
-    if audio_input:
-        st.audio(audio_input)
-        audio_bytes = audio_input.read()
-        audio_filename = "recording.wav"
+    if not hasattr(st, "audio_input"):
+        st.error("Enregistrement non disponible — mettez Streamlit à jour : `pip install --upgrade streamlit` (version 1.31+ requise)")
+    else:
+        with st.container(border=True):
+            audio_input = st.audio_input("🎙️ Cliquez sur le micro pour démarrer, cliquez à nouveau pour arrêter", key=f"rec_{rk}")
+
+        if audio_input:
+            st.audio(audio_input)
+            audio_bytes = audio_input.read()
+            audio_filename = "recording.wav"
 
 with tab_upload:
     uploaded = st.file_uploader("Téléverser un fichier audio", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"], key=f"upl_{rk}")
@@ -194,6 +203,9 @@ with tab_upload:
         audio_filename = uploaded.name
 
 audio_ready = "audio_bytes" in dir() and audio_bytes
+
+if audio_ready:
+    btn_nouveau.button("🔄 Nouveau", on_click=reset, use_container_width=True)
 
 if not auto_transcribe:
     run = st.button("Transcrire & Résumer", type="primary", disabled=not audio_ready)
@@ -240,16 +252,12 @@ if run and audio_ready:
             except Exception as e:
                 st.warning(f"Sauvegarde Drive échouée : {e}")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            label="Télécharger le résumé",
-            data=content,
-            file_name=filename,
-            mime="text/plain",
-        )
-    with col2:
-        st.button("Nouvel enregistrement", on_click=reset)
+    st.download_button(
+        label="Télécharger le résumé",
+        data=content,
+        file_name=filename,
+        mime="text/plain",
+    )
 
 # ── Historique ───────────────────────────────────────────────────────────────
 
