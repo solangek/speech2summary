@@ -161,6 +161,7 @@ with st.sidebar:
     auto_transcribe = st.checkbox("Résumer automatiquement", value=True)
     include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
     drive_configured = all(k in st.secrets for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
+    st.caption(f"Drive configuré : {drive_configured} | Clés présentes : {[k for k in ('GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_REDIRECT_URI') if k in st.secrets]}")
     if drive_configured:
         st.divider()
         if "credentials" in st.session_state:
