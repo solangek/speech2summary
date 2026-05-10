@@ -1,5 +1,3 @@
+streamlit
 groq
-sounddevice
-numpy
-soundfile
 google-genai
