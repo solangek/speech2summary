@@ -188,7 +188,7 @@ with tab_record:
         st.error("Enregistrement non disponible — mettez Streamlit à jour : `pip install --upgrade streamlit` (version 1.31+ requise)")
     else:
         with st.container(border=True):
-            audio_input = st.audio_input("🎙️ Cliquez sur le micro pour démarrer, cliquez à nouveau pour arrêter", key=f"rec_{rk}")
+            audio_input = st.audio_input("Cliquez sur le micro ci-dessous pour démarrer, cliquez à nouveau pour arrêter", key=f"rec_{rk}")
 
         if audio_input:
             st.audio(audio_input)
