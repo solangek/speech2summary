@@ -1,13 +1,16 @@
-import os
-import tempfile
 from datetime import datetime
 
 import streamlit as st
 from google import genai
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaInMemoryUpload
 from groq import Groq
 
 GROQ_MODELS = ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"]
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 DEFAULT_PROMPT = """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
 Respond in the same language as the transcript.
@@ -53,18 +56,103 @@ def build_download_text(transcript: str, summary: str, with_transcript: bool) ->
     return text
 
 
+def make_flow() -> Flow:
+    client_config = {
+        "web": {
+            "client_id": st.secrets["GOOGLE_CLIENT_ID"],
+            "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [st.secrets["GOOGLE_REDIRECT_URI"]],
+        }
+    }
+    flow = Flow.from_client_config(client_config, scopes=SCOPES)
+    flow.redirect_uri = st.secrets["GOOGLE_REDIRECT_URI"]
+    return flow
+
+
+def drive_service(creds: Credentials):
+    return build("drive", "v3", credentials=creds)
+
+
+DRIVE_FOLDER_NAME = "Speech2Summary"
+
+
+def get_or_create_folder(service) -> str:
+    results = service.files().list(
+        q=f"mimeType='application/vnd.google-apps.folder' and name='{DRIVE_FOLDER_NAME}' and trashed=false",
+        fields="files(id)",
+    ).execute()
+    files = results.get("files", [])
+    if files:
+        return files[0]["id"]
+    folder = service.files().create(
+        body={"name": DRIVE_FOLDER_NAME, "mimeType": "application/vnd.google-apps.folder"},
+        fields="id",
+    ).execute()
+    return folder["id"]
+
+
+def save_to_drive(creds: Credentials, content: str, filename: str) -> None:
+    service = drive_service(creds)
+    folder_id = get_or_create_folder(service)
+    media = MediaInMemoryUpload(content.encode("utf-8"), mimetype="text/plain")
+    service.files().create(
+        body={"name": filename, "parents": [folder_id]},
+        media_body=media,
+    ).execute()
+
+
+def list_drive_files(creds: Credentials) -> list[dict]:
+    service = drive_service(creds)
+    folder_id = get_or_create_folder(service)
+    result = service.files().list(
+        q=f"'{folder_id}' in parents and trashed=false",
+        fields="files(id, name, createdTime)",
+        orderBy="createdTime desc",
+        pageSize=50,
+    ).execute()
+    return result.get("files", [])
+
+
+def download_drive_file(creds: Credentials, file_id: str) -> bytes:
+    return drive_service(creds).files().get_media(fileId=file_id).execute()
+
+
 def reset():
     st.session_state.reset_key = st.session_state.get("reset_key", 0) + 1
 
 
+# ── OAuth callback handling ──────────────────────────────────────────────────
+
+params = st.query_params
+if "code" in params and "credentials" not in st.session_state:
+    flow = make_flow()
+    flow.fetch_token(code=params["code"])
+    creds = flow.credentials
+    st.session_state.credentials = {
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "token_uri": creds.token_uri,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes": list(creds.scopes or SCOPES),
+    }
+    st.query_params.clear()
+    st.rerun()
+
+# ── Page setup ───────────────────────────────────────────────────────────────
+
 st.set_page_config(page_title="Speech2Summary", page_icon="🎙️", layout="centered")
 st.title("Mon Assistant Perso")
-st.caption("Enregistrez ou téléversez un fichier audio → transcription → création d'un resumé structuré")
+st.caption("Enregistrez ou téléversez un fichier audio → transcription → création d'un résumé structuré")
 
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
 
 rk = st.session_state.reset_key
+
+# ── Sidebar ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.header("Settings")
@@ -72,6 +160,21 @@ with st.sidebar:
     gemini_model = st.selectbox("Summarization model (Gemini)", GEMINI_MODELS)
     auto_transcribe = st.checkbox("Résumer automatiquement", value=True)
     include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
+    drive_configured = all(k in st.secrets for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
+    if drive_configured:
+        st.divider()
+        if "credentials" in st.session_state:
+            st.success("Google Drive connecté")
+            if st.button("Déconnecter Drive"):
+                del st.session_state["credentials"]
+                st.rerun()
+        else:
+            flow = make_flow()
+            auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
+            st.session_state.oauth_state = state
+            st.link_button("Connecter Google Drive", auth_url)
+
+# ── Audio input ──────────────────────────────────────────────────────────────
 
 tab_record, tab_upload = st.tabs(["Enregistrer", "Envoyer un fichier audio"])
 
@@ -96,39 +199,84 @@ if not auto_transcribe:
 else:
     run = bool(audio_ready)
 
-if run and audio_ready:
-        with st.spinner("Transcription en cours…"):
-            try:
-                transcript = transcribe(audio_bytes, audio_filename, groq_model)
-            except Exception as e:
-                st.error(f"La transcription echoué: {e}")
-                st.stop()
+# ── Transcription & summary ──────────────────────────────────────────────────
 
-        if not transcript:
-            st.warning("Pas de conversation détectée dans l'audio.")
+if run and audio_ready:
+    with st.spinner("Transcription en cours…"):
+        try:
+            transcript = transcribe(audio_bytes, audio_filename, groq_model)
+        except Exception as e:
+            st.error(f"La transcription a échoué : {e}")
             st.stop()
 
-        with st.spinner("Resumé en cours…"):
+    if not transcript:
+        st.warning("Pas de conversation détectée dans l'audio.")
+        st.stop()
+
+    with st.spinner("Résumé en cours…"):
+        try:
+            summary = summarize(transcript, gemini_model)
+        except Exception as e:
+            st.error(f"Échec du résumé : {e}")
+            st.stop()
+
+    st.subheader("Résumé")
+    st.markdown(summary)
+
+    with st.expander("Transcript complet"):
+        st.write(transcript)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    content = build_download_text(transcript, summary, include_transcript)
+    filename = f"summary_{timestamp}.txt"
+
+    if "credentials" in st.session_state:
+        with st.spinner("Sauvegarde sur Google Drive…"):
             try:
-                summary = summarize(transcript, gemini_model)
+                creds = Credentials(**st.session_state.credentials)
+                save_to_drive(creds, content, filename)
+                st.success("Sauvegardé sur Google Drive.")
             except Exception as e:
-                st.error(f"Echec fu résumé: {e}")
-                st.stop()
+                st.warning(f"Sauvegarde Drive échouée : {e}")
 
-        st.subheader("Résumé")
-        st.markdown(summary)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="Télécharger le résumé",
+            data=content,
+            file_name=filename,
+            mime="text/plain",
+        )
+    with col2:
+        st.button("Nouvel enregistrement", on_click=reset)
 
-        with st.expander("Transcript complet"):
-            st.write(transcript)
+# ── Historique ───────────────────────────────────────────────────────────────
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.download_button(
-                label="Télécharger le resumé",
-                data=build_download_text(transcript, summary, include_transcript),
-                file_name=f"summary_{timestamp}.txt",
-                mime="text/plain",
-            )
-        with col2:
-            st.button("Nouvel enregistrement", on_click=reset)
+if "credentials" in st.session_state:
+    st.divider()
+    st.subheader("Historique")
+    try:
+        creds = Credentials(**st.session_state.credentials)
+        files = list_drive_files(creds)
+        if not files:
+            st.caption("Aucun résumé enregistré.")
+        else:
+            for f in files:
+                created = f["createdTime"][:10]
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"{created} — {f['name']}")
+                with col2:
+                    try:
+                        data = download_drive_file(creds, f["id"])
+                        st.download_button(
+                            label="Télécharger",
+                            data=data,
+                            file_name=f["name"],
+                            mime="text/plain",
+                            key=f["id"],
+                        )
+                    except Exception:
+                        st.caption("Erreur")
+    except Exception as e:
+        st.caption(f"Impossible de charger l'historique : {e}")
