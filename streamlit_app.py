@@ -61,7 +61,7 @@ with st.sidebar:
     st.header("Settings")
     groq_model = st.selectbox("Transcription model (Groq)", GROQ_MODELS)
     gemini_model = st.selectbox("Summarization model (Gemini)", GEMINI_MODELS)
-    auto_transcribe = st.checkbox("Auto-transcribe")
+    auto_transcribe = st.checkbox("Auto-transcribe", value=True)
     include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
     st.divider()
     prompt_template = st.text_area("Summarization prompt", value=get_default_prompt(), height=300)
@@ -84,8 +84,12 @@ with tab_upload:
 
 audio_ready = "audio_bytes" in dir() and audio_bytes
 
-if audio_ready:
-    if auto_transcribe or st.button("Transcrire & Résumer", type="primary"):
+if not auto_transcribe:
+    run = st.button("Transcrire & Résumer", type="primary", disabled=not audio_ready)
+else:
+    run = bool(audio_ready)
+
+if run and audio_ready:
         with st.spinner("Transcription en cours…"):
             try:
                 transcript = transcribe(audio_bytes, audio_filename, groq_model)
