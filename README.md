@@ -10,7 +10,6 @@ Small project for turning spoken audio into a text summary:
 - `main.py` — command-line recorder: records from your microphone, transcribes, summarizes, and saves a timestamped `.txt` file in `~/summaries/` by default.
 - `streamlit_app.py` — simple web UI for recording or uploading audio, then downloading the summary + transcript.
 - `requirements.txt` — currently includes the Streamlit app dependencies.
-- `claude-docker-general/` — Docker-related helper files.
 
 ## Setup
 
