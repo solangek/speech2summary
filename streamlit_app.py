@@ -38,9 +38,9 @@ def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
     return result.text.strip()
 
 
-def summarize(transcript: str, model: str, prompt_template: str) -> str:
+def summarize(transcript: str, model: str) -> str:
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-    prompt = f"{prompt_template}\n\nTranscript:\n{transcript}"
+    prompt = f"{get_default_prompt()}\n\nTranscript:\n{transcript}"
     response = client.models.generate_content(model=model, contents=prompt)
     return response.text
 
@@ -54,17 +54,15 @@ def build_download_text(transcript: str, summary: str, with_transcript: bool) ->
 
 
 st.set_page_config(page_title="Speech2Summary", page_icon="🎙️", layout="centered")
-st.title("Speech2Summary")
-st.caption("Record or upload audio → transcribe with Groq → summarize with Gemini")
+st.title("Mon Assistant Perso")
+st.caption("Enregistrez ou téléversez un fichier audio → transcription → création d'un resumé structuré")
 
 with st.sidebar:
     st.header("Settings")
     groq_model = st.selectbox("Transcription model (Groq)", GROQ_MODELS)
     gemini_model = st.selectbox("Summarization model (Gemini)", GEMINI_MODELS)
-    auto_transcribe = st.checkbox("Auto-transcribe", value=True)
+    auto_transcribe = st.checkbox("Résumer automatiquement", value=True)
     include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
-    st.divider()
-    prompt_template = st.text_area("Summarization prompt", value=get_default_prompt(), height=300)
 
 tab_record, tab_upload = st.tabs(["Enregistrer", "Envoyer un fichier audio"])
 
@@ -103,7 +101,7 @@ if run and audio_ready:
 
         with st.spinner("Resumé en cours…"):
             try:
-                summary = summarize(transcript, gemini_model, prompt_template)
+                summary = summarize(transcript, gemini_model)
             except Exception as e:
                 st.error(f"Echec fu résumé: {e}")
                 st.stop()
