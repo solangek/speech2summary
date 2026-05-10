@@ -53,9 +53,18 @@ def build_download_text(transcript: str, summary: str, with_transcript: bool) ->
     return text
 
 
+def reset():
+    st.session_state.reset_key = st.session_state.get("reset_key", 0) + 1
+
+
 st.set_page_config(page_title="Speech2Summary", page_icon="🎙️", layout="centered")
 st.title("Mon Assistant Perso")
 st.caption("Enregistrez ou téléversez un fichier audio → transcription → création d'un resumé structuré")
+
+if "reset_key" not in st.session_state:
+    st.session_state.reset_key = 0
+
+rk = st.session_state.reset_key
 
 with st.sidebar:
     st.header("Settings")
@@ -67,14 +76,14 @@ with st.sidebar:
 tab_record, tab_upload = st.tabs(["Enregistrer", "Envoyer un fichier audio"])
 
 with tab_record:
-    audio_input = st.audio_input("Cliquez pour enregistrer depuis votre micro")
+    audio_input = st.audio_input("Cliquez pour enregistrer depuis votre micro", key=f"rec_{rk}")
     if audio_input:
         st.audio(audio_input)
         audio_bytes = audio_input.read()
         audio_filename = "recording.wav"
 
 with tab_upload:
-    uploaded = st.file_uploader("Téléverser un fichier audio", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"])
+    uploaded = st.file_uploader("Téléverser un fichier audio", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"], key=f"upl_{rk}")
     if uploaded:
         st.audio(uploaded)
         audio_bytes = uploaded.read()
@@ -113,9 +122,13 @@ if run and audio_ready:
             st.write(transcript)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.download_button(
-            label="Télécharger le resumé",
-            data=build_download_text(transcript, summary, include_transcript),
-            file_name=f"summary_{timestamp}.txt",
-            mime="text/plain",
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="Télécharger le resumé",
+                data=build_download_text(transcript, summary, include_transcript),
+                file_name=f"summary_{timestamp}.txt",
+                mime="text/plain",
+            )
+        with col2:
+            st.button("Nouvel enregistrement", on_click=reset)
