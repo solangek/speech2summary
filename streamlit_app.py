@@ -1,7 +1,11 @@
+import json
+import logging
 import subprocess
+import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 
 import streamlit as st
 from google import genai
@@ -33,6 +37,27 @@ Format your response EXACTLY as:
 
 def get_default_prompt() -> str:
     return st.secrets.get("SUMMARIZATION_PROMPT", DEFAULT_PROMPT)
+
+
+_usage_logger = logging.getLogger("speech2summary.usage")
+if not _usage_logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _usage_logger.addHandler(_handler)
+    _usage_logger.setLevel(logging.INFO)
+    _usage_logger.propagate = False
+
+
+def log_event(event: str, **fields) -> None:
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = uuid.uuid4().hex[:12]
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "event": event,
+        "session_id": st.session_state.session_id,
+        **fields,
+    }
+    _usage_logger.info(json.dumps(payload, ensure_ascii=False, default=str))
 
 
 COMPRESS_THRESHOLD_BYTES = 5_000_000
@@ -271,33 +296,47 @@ else:
 # ── Transcription & summary ──────────────────────────────────────────────────
 
 if run and audio_ready:
+    original_size = len(audio_bytes)
+    log_event("run_started", source=audio_filename, bytes=original_size, drive_connected="credentials" in st.session_state)
+
     if compress_enabled and len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
         with st.spinner(f"Compression de l'audio ({len(audio_bytes) / 1_000_000:.1f} Mo)…"):
+            t0 = time.monotonic()
             try:
                 audio_bytes, audio_filename = compress_audio(audio_bytes)
                 st.caption(f"Audio compressé à {len(audio_bytes) / 1_000_000:.2f} Mo")
+                log_event("compress_done", before_bytes=original_size, after_bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2))
             except FileNotFoundError:
                 st.warning("ffmpeg introuvable — envoi de l'audio non compressé.")
+                log_event("compress_skipped", reason="ffmpeg_not_found")
             except subprocess.CalledProcessError as e:
                 st.warning(f"Compression échouée, envoi du fichier original : {e.stderr.decode(errors='ignore')[:200]}")
+                log_event("compress_failed", error=e.stderr.decode(errors="ignore")[:200])
 
     progress_bar = st.progress(0.0, text="Transcription en cours…")
+    t0 = time.monotonic()
     try:
         transcript = transcribe_with_keepalive(audio_bytes, audio_filename, groq_model, progress_bar)
     except Exception as e:
         progress_bar.empty()
+        log_event("transcribe_failed", model=groq_model, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), error=str(e)[:300])
         st.error(f"La transcription a échoué : {e}")
         st.stop()
     progress_bar.empty()
+    log_event("transcribe_done", model=groq_model, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), transcript_chars=len(transcript))
 
     if not transcript:
         st.warning("Pas de conversation détectée dans l'audio.")
+        log_event("transcribe_empty")
         st.stop()
 
     with st.spinner("Résumé en cours…"):
+        t0 = time.monotonic()
         try:
             summary = summarize(transcript, gemini_model)
+            log_event("summarize_done", model=gemini_model, transcript_chars=len(transcript), summary_chars=len(summary or ""), duration_s=round(time.monotonic() - t0, 2))
         except Exception as e:
+            log_event("summarize_failed", model=gemini_model, error=str(e)[:300], duration_s=round(time.monotonic() - t0, 2))
             # check if error is 429 RESOURCE_EXHAUSTED from Gemini API and show a specific message
             if "RESOURCE_EXHAUSTED" in str(e):
                 st.error("Le modèle de résumé est temporairement indisponible (limite de quota atteinte, 20 requêtes/jour). Veuillez réessayer plus tard.")
@@ -321,8 +360,10 @@ if run and audio_ready:
                 creds = Credentials(**st.session_state.credentials)
                 save_to_drive(creds, content, filename)
                 st.success("Sauvegardé sur Google Drive.")
+                log_event("drive_saved", filename=filename, bytes=len(content))
             except Exception as e:
                 st.warning(f"Sauvegarde Drive échouée : {e}")
+                log_event("drive_save_failed", error=str(e)[:300])
 
     st.download_button(
         label="Télécharger le résumé",
