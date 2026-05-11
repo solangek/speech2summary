@@ -1,4 +1,8 @@
+import os
 import subprocess
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import streamlit as st
@@ -7,7 +11,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaInMemoryUpload
-from groq import Groq
+from groq import Groq, RateLimitError
 
 GROQ_MODELS = ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"]
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
@@ -34,6 +38,9 @@ def get_default_prompt() -> str:
 
 
 COMPRESS_THRESHOLD_BYTES = 5_000_000
+CHUNK_SECONDS = 300
+CHUNK_THRESHOLD_BYTES = 2_000_000
+MAX_PARALLEL_CHUNKS = 4
 
 
 def compress_audio(audio_bytes: bytes) -> tuple[bytes, str]:
@@ -51,13 +58,79 @@ def compress_audio(audio_bytes: bytes) -> tuple[bytes, str]:
     return result.stdout, "recording.ogg"
 
 
-def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
+def chunk_audio(audio_bytes: bytes, seconds: int = CHUNK_SECONDS) -> list[bytes]:
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "input.ogg")
+        with open(src, "wb") as f:
+            f.write(audio_bytes)
+        pattern = os.path.join(tmp, "chunk_%03d.ogg")
+        subprocess.run(
+            [
+                "ffmpeg", "-loglevel", "error", "-i", src,
+                "-c", "copy",
+                "-f", "segment", "-segment_time", str(seconds),
+                "-reset_timestamps", "1",
+                pattern,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        chunks = []
+        for name in sorted(os.listdir(tmp)):
+            if name.startswith("chunk_"):
+                with open(os.path.join(tmp, name), "rb") as f:
+                    chunks.append(f.read())
+        return chunks
+
+
+def transcribe_with_retry(audio_bytes: bytes, filename: str, model: str, max_attempts: int = 4) -> str:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    result = client.audio.transcriptions.create(
-        file=(filename, audio_bytes),
-        model=model,
-    )
-    return result.text.strip()
+    for attempt in range(max_attempts):
+        try:
+            result = client.audio.transcriptions.create(
+                file=(filename, audio_bytes),
+                model=model,
+            )
+            return result.text.strip()
+        except RateLimitError as e:
+            if attempt == max_attempts - 1:
+                raise
+            retry_after = 2 ** attempt
+            try:
+                retry_after = int(e.response.headers.get("retry-after", retry_after))
+            except (AttributeError, ValueError, TypeError):
+                pass
+            time.sleep(retry_after)
+    return ""
+
+
+def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
+    return transcribe_with_retry(audio_bytes, filename, model)
+
+
+def transcribe_chunked(audio_bytes: bytes, model: str, on_progress=None) -> str:
+    chunks = chunk_audio(audio_bytes)
+    if len(chunks) <= 1:
+        text = transcribe_with_retry(audio_bytes, "recording.ogg", model)
+        if on_progress:
+            on_progress(1, 1)
+        return text
+
+    results: list[str] = [""] * len(chunks)
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_CHUNKS, len(chunks))) as pool:
+        futures = {
+            pool.submit(transcribe_with_retry, chunk, f"chunk_{i:03d}.ogg", model): i
+            for i, chunk in enumerate(chunks)
+        }
+        from concurrent.futures import as_completed
+        for fut in as_completed(futures):
+            i = futures[fut]
+            results[i] = fut.result()
+            done += 1
+            if on_progress:
+                on_progress(done, len(chunks))
+    return " ".join(s for s in results if s).strip()
 
 
 def summarize(transcript: str, model: str) -> str:
@@ -249,12 +322,25 @@ if run and audio_ready:
             except subprocess.CalledProcessError as e:
                 st.warning(f"Compression échouée, envoi du fichier original : {e.stderr.decode(errors='ignore')[:200]}")
 
-    with st.spinner("Transcription en cours…"):
-        try:
-            transcript = transcribe(audio_bytes, audio_filename, groq_model)
-        except Exception as e:
-            st.error(f"La transcription a échoué : {e}")
-            st.stop()
+    use_chunking = audio_filename.endswith(".ogg") and len(audio_bytes) >= CHUNK_THRESHOLD_BYTES
+    progress_bar = st.progress(0.0, text="Transcription en cours…") if use_chunking else None
+
+    def update_progress(done: int, total: int) -> None:
+        if progress_bar is not None:
+            progress_bar.progress(done / total, text=f"Transcription {done}/{total} segments…")
+
+    try:
+        if use_chunking:
+            transcript = transcribe_chunked(audio_bytes, groq_model, on_progress=update_progress)
+            progress_bar.empty()
+        else:
+            with st.spinner("Transcription en cours…"):
+                transcript = transcribe(audio_bytes, audio_filename, groq_model)
+    except Exception as e:
+        if progress_bar is not None:
+            progress_bar.empty()
+        st.error(f"La transcription a échoué : {e}")
+        st.stop()
 
     if not transcript:
         st.warning("Pas de conversation détectée dans l'audio.")
