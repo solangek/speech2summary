@@ -29,7 +29,7 @@ The CLI reads from environment variables; the Streamlit app reads from `.streaml
 | Key | Required by | Purpose |
 |---|---|---|
 | `GROQ_API_KEY` | CLI + Streamlit | Groq Whisper transcription |
-| `GEMINI_API_KEY` | CLI + Streamlit | Gemini summarization (the SDK also accepts `GOOGLE_API_KEY`; if both are set, `GOOGLE_API_KEY` wins) |
+| `GEMINI_API_KEY` | CLI + Streamlit | Gemini summarization (the SDK also accepts `GOOGLE_API_KEY`; if both are set, `GOOGLE_API_KEY` wins). **Streamlit supports an array** of keys for automatic quota rotation |
 | `SUMMARIZATION_PROMPT` | Streamlit (optional) | Override the built-in meeting/lecture prompt. Falls back to `DEFAULT_PROMPT` in `streamlit_app.py` |
 | `GOOGLE_CLIENT_ID` | Streamlit (optional, Drive only) | OAuth client ID for the Google Drive sync feature |
 | `GOOGLE_CLIENT_SECRET` | Streamlit (optional, Drive only) | OAuth client secret |
@@ -56,6 +56,16 @@ GOOGLE_CLIENT_ID = "..."
 GOOGLE_CLIENT_SECRET = "..."
 GOOGLE_REDIRECT_URI = "https://your-app.streamlit.app/"
 ```
+
+See `.streamlit/secrets.toml.example` for a complete template.
+
+**Multiple Gemini keys (Streamlit only):** To handle quota limits, you can provide multiple Gemini API keys as an array. The app will automatically rotate through them on failure:
+
+```toml
+GEMINI_API_KEY = ["key1", "key2", "key3"]
+```
+
+When a request fails due to quota exhaustion (HTTP 429 / `RESOURCE_EXHAUSTED`), the app **globally switches** to the next key. All subsequent requests use the new key until it also hits quota, then rotates again. This provides seamless failover across API key quotas.
 
 If the three `GOOGLE_*` secrets are absent, the Drive sidebar section is hidden and the rest of the app works normally.
 

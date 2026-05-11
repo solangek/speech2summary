@@ -39,6 +39,33 @@ def get_default_prompt() -> str:
     return st.secrets.get("SUMMARIZATION_PROMPT", DEFAULT_PROMPT)
 
 
+def get_gemini_keys() -> list[str]:
+    """Return list of Gemini API keys. Handles both single string and array."""
+    raw = st.secrets.get("GEMINI_API_KEY", [])
+    if isinstance(raw, str):
+        return [raw]
+    return list(raw)
+
+
+def get_current_gemini_key() -> str:
+    """Get the current active Gemini key from global rotation state."""
+    keys = get_gemini_keys()
+    if not keys:
+        raise ValueError("No GEMINI_API_KEY configured in secrets")
+    if "gemini_key_index" not in st.session_state:
+        st.session_state.gemini_key_index = 0
+    idx = st.session_state.gemini_key_index
+    return keys[idx % len(keys)]
+
+
+def rotate_to_next_gemini_key() -> None:
+    """Switch to the next Gemini key globally after current key fails."""
+    keys = get_gemini_keys()
+    if "gemini_key_index" not in st.session_state:
+        st.session_state.gemini_key_index = 0
+    st.session_state.gemini_key_index = (st.session_state.gemini_key_index + 1) % len(keys)
+
+
 _usage_logger = logging.getLogger("speech2summary.usage")
 if not _usage_logger.handlers:
     _handler = logging.StreamHandler(sys.stdout)
@@ -125,22 +152,41 @@ def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
     return transcribe_with_retry(audio_bytes, filename, model)
 
 
-def summarize_with_retry(transcript: str, model: str, max_attempts: int = 4) -> str:
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+def summarize_with_retry(transcript: str, model: str, max_attempts: int | None = None) -> str:
+    keys = get_gemini_keys()
+    if max_attempts is None:
+        max_attempts = len(keys)
+
     prompt = f"{get_default_prompt()}\n\nTranscript:\n{transcript}"
     last_error: Exception | None = None
+
     for attempt in range(max_attempts):
+        # Use the current global key
+        key = get_current_gemini_key()
+        client = genai.Client(api_key=key)
+
         try:
             response = client.models.generate_content(model=model, contents=prompt)
             return response.text
         except Exception as e:
             last_error = e
             msg = str(e)
-            transient = "UNAVAILABLE" in msg or "503" in msg or "500" in msg or "deadline" in msg.lower()
-            if not transient or attempt == max_attempts - 1:
+
+            # Check if error is transient or quota-related
+            transient = "500" in msg or "deadline" in msg.lower()
+            quota_error = "RESOURCE_EXHAUSTED" in msg or "429" in msg or "UNAVAILABLE" in msg or "503" in msg
+
+            # If quota error, rotate to next key globally and retry
+            if quota_error and attempt < max_attempts - 1:
+                rotate_to_next_gemini_key()
+                continue
+            # If transient, retry with backoff on same key
+            elif transient and attempt < max_attempts - 1:
+                wait = 2 ** attempt
+                time.sleep(wait)
+            else:
                 raise
-            wait = 2 ** attempt
-            time.sleep(wait)
+
     if last_error:
         raise last_error
     return ""
