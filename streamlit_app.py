@@ -1,6 +1,4 @@
-import os
 import subprocess
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -38,9 +36,6 @@ def get_default_prompt() -> str:
 
 
 COMPRESS_THRESHOLD_BYTES = 5_000_000
-CHUNK_SECONDS = 300
-CHUNK_THRESHOLD_BYTES = 2_000_000
-MAX_PARALLEL_CHUNKS = 4
 
 
 def compress_audio(audio_bytes: bytes) -> tuple[bytes, str]:
@@ -56,31 +51,6 @@ def compress_audio(audio_bytes: bytes) -> tuple[bytes, str]:
         check=True,
     )
     return result.stdout, "recording.ogg"
-
-
-def chunk_audio(audio_bytes: bytes, seconds: int = CHUNK_SECONDS) -> list[bytes]:
-    with tempfile.TemporaryDirectory() as tmp:
-        src = os.path.join(tmp, "input.ogg")
-        with open(src, "wb") as f:
-            f.write(audio_bytes)
-        pattern = os.path.join(tmp, "chunk_%03d.ogg")
-        subprocess.run(
-            [
-                "ffmpeg", "-loglevel", "error", "-i", src,
-                "-c", "copy",
-                "-f", "segment", "-segment_time", str(seconds),
-                "-reset_timestamps", "1",
-                pattern,
-            ],
-            capture_output=True,
-            check=True,
-        )
-        chunks = []
-        for name in sorted(os.listdir(tmp)):
-            if name.startswith("chunk_"):
-                with open(os.path.join(tmp, name), "rb") as f:
-                    chunks.append(f.read())
-        return chunks
 
 
 def transcribe_with_retry(audio_bytes: bytes, filename: str, model: str, max_attempts: int = 4) -> str:
@@ -104,33 +74,22 @@ def transcribe_with_retry(audio_bytes: bytes, filename: str, model: str, max_att
     return ""
 
 
+def transcribe_with_keepalive(audio_bytes: bytes, filename: str, model: str, progress) -> str:
+    estimated_seconds = max(15.0, len(audio_bytes) / 1_500_000 * 15)
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(transcribe_with_retry, audio_bytes, filename, model)
+        while not future.done():
+            elapsed = time.monotonic() - started
+            ratio = min(0.95, elapsed / estimated_seconds)
+            progress.progress(ratio, text=f"Transcription en cours… {int(elapsed)}s")
+            time.sleep(1.0)
+        progress.progress(1.0, text="Transcription terminée")
+        return future.result()
+
+
 def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
     return transcribe_with_retry(audio_bytes, filename, model)
-
-
-def transcribe_chunked(audio_bytes: bytes, model: str, on_progress=None) -> str:
-    chunks = chunk_audio(audio_bytes)
-    if len(chunks) <= 1:
-        text = transcribe_with_retry(audio_bytes, "recording.ogg", model)
-        if on_progress:
-            on_progress(1, 1)
-        return text
-
-    results: list[str] = [""] * len(chunks)
-    done = 0
-    with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_CHUNKS, len(chunks))) as pool:
-        futures = {
-            pool.submit(transcribe_with_retry, chunk, f"chunk_{i:03d}.ogg", model): i
-            for i, chunk in enumerate(chunks)
-        }
-        from concurrent.futures import as_completed
-        for fut in as_completed(futures):
-            i = futures[fut]
-            results[i] = fut.result()
-            done += 1
-            if on_progress:
-                on_progress(done, len(chunks))
-    return " ".join(s for s in results if s).strip()
 
 
 def summarize(transcript: str, model: str) -> str:
@@ -322,25 +281,14 @@ if run and audio_ready:
             except subprocess.CalledProcessError as e:
                 st.warning(f"Compression échouée, envoi du fichier original : {e.stderr.decode(errors='ignore')[:200]}")
 
-    use_chunking = audio_filename.endswith(".ogg") and len(audio_bytes) >= CHUNK_THRESHOLD_BYTES
-    progress_bar = st.progress(0.0, text="Transcription en cours…") if use_chunking else None
-
-    def update_progress(done: int, total: int) -> None:
-        if progress_bar is not None:
-            progress_bar.progress(done / total, text=f"Transcription {done}/{total} segments…")
-
+    progress_bar = st.progress(0.0, text="Transcription en cours…")
     try:
-        if use_chunking:
-            transcript = transcribe_chunked(audio_bytes, groq_model, on_progress=update_progress)
-            progress_bar.empty()
-        else:
-            with st.spinner("Transcription en cours…"):
-                transcript = transcribe(audio_bytes, audio_filename, groq_model)
+        transcript = transcribe_with_keepalive(audio_bytes, audio_filename, groq_model, progress_bar)
     except Exception as e:
-        if progress_bar is not None:
-            progress_bar.empty()
+        progress_bar.empty()
         st.error(f"La transcription a échoué : {e}")
         st.stop()
+    progress_bar.empty()
 
     if not transcript:
         st.warning("Pas de conversation détectée dans l'audio.")
