@@ -1,3 +1,4 @@
+import subprocess
 from datetime import datetime
 
 import streamlit as st
@@ -30,6 +31,24 @@ Format your response EXACTLY as:
 
 def get_default_prompt() -> str:
     return st.secrets.get("SUMMARIZATION_PROMPT", DEFAULT_PROMPT)
+
+
+COMPRESS_THRESHOLD_BYTES = 5_000_000
+
+
+def compress_audio(audio_bytes: bytes) -> tuple[bytes, str]:
+    result = subprocess.run(
+        [
+            "ffmpeg", "-loglevel", "error", "-i", "pipe:0",
+            "-ac", "1", "-ar", "16000",
+            "-c:a", "libopus", "-b:a", "16k",
+            "-f", "ogg", "pipe:1",
+        ],
+        input=audio_bytes,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout, "recording.ogg"
 
 
 def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
@@ -215,6 +234,16 @@ else:
 # ── Transcription & summary ──────────────────────────────────────────────────
 
 if run and audio_ready:
+    if len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
+        with st.spinner(f"Compression de l'audio ({len(audio_bytes) / 1_000_000:.1f} Mo)…"):
+            try:
+                audio_bytes, audio_filename = compress_audio(audio_bytes)
+                st.caption(f"Audio compressé à {len(audio_bytes) / 1_000_000:.2f} Mo")
+            except FileNotFoundError:
+                st.warning("ffmpeg introuvable — envoi de l'audio non compressé.")
+            except subprocess.CalledProcessError as e:
+                st.warning(f"Compression échouée, envoi du fichier original : {e.stderr.decode(errors='ignore')[:200]}")
+
     with st.spinner("Transcription en cours…"):
         try:
             transcript = transcribe(audio_bytes, audio_filename, groq_model)
