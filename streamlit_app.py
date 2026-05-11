@@ -99,29 +99,64 @@ def transcribe_with_retry(audio_bytes: bytes, filename: str, model: str, max_att
     return ""
 
 
-def transcribe_with_keepalive(audio_bytes: bytes, filename: str, model: str, progress) -> str:
-    estimated_seconds = max(15.0, len(audio_bytes) / 1_500_000 * 15)
+def run_with_keepalive(fn, *args, progress, estimated_seconds: float, label: str, done_label: str):
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(transcribe_with_retry, audio_bytes, filename, model)
+        future = pool.submit(fn, *args)
         while not future.done():
             elapsed = time.monotonic() - started
             ratio = min(0.95, elapsed / estimated_seconds)
-            progress.progress(ratio, text=f"Transcription en cours… {int(elapsed)}s")
+            progress.progress(ratio, text=f"{label} {int(elapsed)}s")
             time.sleep(1.0)
-        progress.progress(1.0, text="Transcription terminée")
+        progress.progress(1.0, text=done_label)
         return future.result()
+
+
+def transcribe_with_keepalive(audio_bytes: bytes, filename: str, model: str, progress) -> str:
+    estimated = max(15.0, len(audio_bytes) / 1_500_000 * 15)
+    return run_with_keepalive(
+        transcribe_with_retry, audio_bytes, filename, model,
+        progress=progress, estimated_seconds=estimated,
+        label="Transcription en cours…", done_label="Transcription terminée",
+    )
 
 
 def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
     return transcribe_with_retry(audio_bytes, filename, model)
 
 
-def summarize(transcript: str, model: str) -> str:
+def summarize_with_retry(transcript: str, model: str, max_attempts: int = 4) -> str:
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     prompt = f"{get_default_prompt()}\n\nTranscript:\n{transcript}"
-    response = client.models.generate_content(model=model, contents=prompt)
-    return response.text
+    last_error: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            response = client.models.generate_content(model=model, contents=prompt)
+            return response.text
+        except Exception as e:
+            last_error = e
+            msg = str(e)
+            transient = "UNAVAILABLE" in msg or "503" in msg or "500" in msg or "deadline" in msg.lower()
+            if not transient or attempt == max_attempts - 1:
+                raise
+            wait = 2 ** attempt
+            time.sleep(wait)
+    if last_error:
+        raise last_error
+    return ""
+
+
+def summarize_with_keepalive(transcript: str, model: str, progress) -> str:
+    estimated = max(8.0, len(transcript) / 6000 * 2)
+    return run_with_keepalive(
+        summarize_with_retry, transcript, model,
+        progress=progress, estimated_seconds=estimated,
+        label="Résumé en cours…", done_label="Résumé terminé",
+    )
+
+
+def summarize(transcript: str, model: str) -> str:
+    return summarize_with_retry(transcript, model)
 
 
 def build_download_text(transcript: str, summary: str, with_transcript: bool) -> str:
@@ -330,19 +365,23 @@ if run and audio_ready:
         log_event("transcribe_empty")
         st.stop()
 
-    with st.spinner("Résumé en cours…"):
-        t0 = time.monotonic()
-        try:
-            summary = summarize(transcript, gemini_model)
-            log_event("summarize_done", model=gemini_model, transcript_chars=len(transcript), summary_chars=len(summary or ""), duration_s=round(time.monotonic() - t0, 2))
-        except Exception as e:
-            log_event("summarize_failed", model=gemini_model, error=str(e)[:300], duration_s=round(time.monotonic() - t0, 2))
-            # check if error is 429 RESOURCE_EXHAUSTED from Gemini API and show a specific message
-            if "RESOURCE_EXHAUSTED" in str(e):
-                st.error("Le modèle de résumé est temporairement indisponible (limite de quota atteinte, 20 requêtes/jour). Veuillez réessayer plus tard.")
-            else:
-                st.error(f"Échec du résumé : {e}")
-            st.stop()
+    summary_progress = st.progress(0.0, text="Résumé en cours…")
+    t0 = time.monotonic()
+    try:
+        summary = summarize_with_keepalive(transcript, gemini_model, summary_progress)
+        log_event("summarize_done", model=gemini_model, transcript_chars=len(transcript), summary_chars=len(summary or ""), duration_s=round(time.monotonic() - t0, 2))
+    except Exception as e:
+        summary_progress.empty()
+        log_event("summarize_failed", model=gemini_model, error=str(e)[:300], duration_s=round(time.monotonic() - t0, 2))
+        err = str(e)
+        if "RESOURCE_EXHAUSTED" in err:
+            st.error("Le modèle de résumé est temporairement indisponible (limite de quota atteinte, 20 requêtes/jour). Veuillez réessayer plus tard.")
+        elif "UNAVAILABLE" in err or "503" in err:
+            st.error("Gemini est temporairement surchargé (503). Réessayez dans quelques instants.")
+        else:
+            st.error(f"Échec du résumé : {e}")
+        st.stop()
+    summary_progress.empty()
 
     st.subheader("Résumé")
     st.markdown(summary)
