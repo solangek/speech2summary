@@ -184,6 +184,11 @@ with st.sidebar:
     gemini_model = st.selectbox("Summarization model (Gemini)", GEMINI_MODELS)
     auto_transcribe = st.checkbox("Résumer automatiquement", value=True)
     include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
+    compress_enabled = st.checkbox(
+        "Compresser l'audio avant transcription",
+        value=True,
+        help="Réencode en Opus mono 16 kHz (≈ 16 kbps) via ffmpeg pour les fichiers ≥ 5 Mo. Réduit fortement la taille sans perte de précision pour Whisper.",
+    )
     drive_configured = all(k in st.secrets for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
     if drive_configured:
         st.divider()
@@ -234,7 +239,7 @@ else:
 # ── Transcription & summary ──────────────────────────────────────────────────
 
 if run and audio_ready:
-    if len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
+    if compress_enabled and len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
         with st.spinner(f"Compression de l'audio ({len(audio_bytes) / 1_000_000:.1f} Mo)…"):
             try:
                 audio_bytes, audio_filename = compress_audio(audio_bytes)
@@ -259,7 +264,11 @@ if run and audio_ready:
         try:
             summary = summarize(transcript, gemini_model)
         except Exception as e:
-            st.error(f"Échec du résumé : {e}")
+            # check if error is 429 RESOURCE_EXHAUSTED from Gemini API and show a specific message
+            if "RESOURCE_EXHAUSTED" in str(e):
+                st.error("Le modèle de résumé est temporairement indisponible (limite de quota atteinte, 20 requêtes/jour). Veuillez réessayer plus tard.")
+            else:
+                st.error(f"Échec du résumé : {e}")
             st.stop()
 
     st.subheader("Résumé")
