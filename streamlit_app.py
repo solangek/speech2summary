@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -23,16 +24,138 @@ GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 UPLOAD_TYPES = ["wav", "mp3", "m4a", "m4v", "ogg", "flac", "webm"]
 VIDEO_EXTENSIONS = {".m4v"}
+UI_LANGUAGE_OPTIONS = ["fr", "en"]
 TRANSCRIPTION_LANGUAGES = {
-    "Auto-detect": None,
-    "Français": "fr",
-    "English": "en",
-    "עברית": "he",
+    "auto": None,
+    "fr": "fr",
+    "en": "en",
+    "he": "he",
 }
 SUMMARY_OUTPUT_LANGUAGES = {
-    "Français": "French",
-    "English": "English",
-    "עברית": "Hebrew",
+    "fr": "French",
+    "en": "English",
+    "he": "Hebrew",
+}
+
+TRANSLATIONS = {
+    "fr": {
+        "page_title": "Speech2Summary",
+        "app_title": "Mon Assistant Perso",
+        "app_caption": "Enregistrez ou téléversez un fichier audio → transcription → création d'un résumé structuré",
+        "settings_header": "Paramètres",
+        "ui_language_label": "Langue de l'interface",
+        "transcription_language_label": "Langue de l'enregistrement",
+        "transcription_language_help": "Aide le modèle de transcription en indiquant la langue parlée principale.",
+        "summary_language_label": "Langue du résumé",
+        "summary_language_help": "Force la langue de sortie du résumé, indépendamment de la langue de la transcription.",
+        "auto_summarize": "Résumer automatiquement",
+        "include_transcript": "Inclure la transcription dans le fichier",
+        "compress_audio": "Compresser l'audio avant transcription",
+        "compress_audio_help": "Réencode en Opus mono 16 kHz (≈ 16 kbps) via ffmpeg pour les fichiers ≥ 5 Mo. Réduit fortement la taille sans perte de précision pour Whisper.",
+        "drive_connected": "Google Drive connecté",
+        "disconnect_drive": "Déconnecter Drive",
+        "connect_drive": "Connecter Google Drive",
+        "tab_record": "Enregistrer",
+        "tab_upload": "Envoyer un fichier audio",
+        "recording_unavailable": "Enregistrement non disponible — mettez Streamlit à jour : `pip install --upgrade streamlit` (version 1.31+ requise)",
+        "recording_input_label": "Cliquez sur le micro ci-dessous pour démarrer, cliquez à nouveau pour arrêter",
+        "upload_audio_label": "Téléverser un fichier audio",
+        "new_button": "🔄 Nouveau",
+        "run_button": "Transcrire & Résumer",
+        "extract_audio_spinner": "Extraction de la piste audio du fichier vidéo…",
+        "extract_audio_caption": "Piste audio extraite ({size_mb:.2f} Mo)",
+        "extract_audio_ffmpeg_error": "Impossible de traiter le fichier vidéo : ffmpeg est introuvable.",
+        "extract_audio_failed_error": "Impossible d'extraire l'audio du fichier vidéo : {error}",
+        "compress_audio_spinner": "Compression de l'audio ({size_mb:.1f} Mo)…",
+        "compress_audio_caption": "Audio compressé à {size_mb:.2f} Mo",
+        "compress_audio_ffmpeg_warning": "ffmpeg introuvable — envoi de l'audio non compressé.",
+        "compress_audio_failed_warning": "Compression échouée, envoi du fichier original : {error}",
+        "transcription_progress": "Transcription en cours…",
+        "transcription_done": "Transcription terminée",
+        "transcription_failed": "La transcription a échoué : {error}",
+        "no_speech_detected": "Pas de conversation détectée dans l'audio.",
+        "summary_progress": "Résumé en cours…",
+        "summary_done": "Résumé terminé",
+        "summary_quota_error": "Le modèle de résumé est temporairement indisponible (limite de quota atteinte, 20 requêtes/jour). Veuillez réessayer plus tard.",
+        "summary_unavailable_error": "Gemini est temporairement surchargé (503). Réessayez dans quelques instants.",
+        "summary_failed": "Échec du résumé : {error}",
+        "summary_header": "Résumé",
+        "full_transcript": "Transcript complet",
+        "save_drive_spinner": "Sauvegarde sur Google Drive…",
+        "save_drive_success": "Sauvegardé sur Google Drive.",
+        "save_drive_failed": "Sauvegarde Drive échouée : {error}",
+        "download_summary": "Télécharger le résumé",
+        "history_header": "Historique",
+        "history_empty": "Aucun résumé enregistré.",
+        "download_file": "Télécharger",
+        "generic_error": "Erreur",
+        "history_failed": "Impossible de charger l'historique : {error}",
+        "language_auto": "Détection automatique",
+        "language_fr": "Français",
+        "language_en": "Anglais",
+        "language_he": "Hébreu",
+        "ui_language_fr": "Français",
+        "ui_language_en": "English",
+    },
+    "en": {
+        "page_title": "Speech2Summary",
+        "app_title": "My Personal Assistant",
+        "app_caption": "Record or upload an audio file → transcription → structured summary generation",
+        "settings_header": "Settings",
+        "ui_language_label": "Interface language",
+        "transcription_language_label": "Recording language",
+        "transcription_language_help": "Helps the transcription model by indicating the main spoken language.",
+        "summary_language_label": "Summary language",
+        "summary_language_help": "Forces the summary output language independently from the transcription language.",
+        "auto_summarize": "Summarize automatically",
+        "include_transcript": "Include transcript in the file",
+        "compress_audio": "Compress audio before transcription",
+        "compress_audio_help": "Re-encodes to mono 16 kHz Opus (≈ 16 kbps) via ffmpeg for files ≥ 5 MB. Greatly reduces size without hurting Whisper accuracy.",
+        "drive_connected": "Google Drive connected",
+        "disconnect_drive": "Disconnect Drive",
+        "connect_drive": "Connect Google Drive",
+        "tab_record": "Record",
+        "tab_upload": "Upload audio file",
+        "recording_unavailable": "Recording not available — update Streamlit: `pip install --upgrade streamlit` (version 1.31+ required)",
+        "recording_input_label": "Click the microphone below to start, then click again to stop",
+        "upload_audio_label": "Upload an audio file",
+        "new_button": "🔄 New",
+        "run_button": "Transcribe & Summarize",
+        "extract_audio_spinner": "Extracting audio track from the video file…",
+        "extract_audio_caption": "Audio track extracted ({size_mb:.2f} MB)",
+        "extract_audio_ffmpeg_error": "Cannot process the video file: ffmpeg was not found.",
+        "extract_audio_failed_error": "Unable to extract audio from the video file: {error}",
+        "compress_audio_spinner": "Compressing audio ({size_mb:.1f} MB)…",
+        "compress_audio_caption": "Audio compressed to {size_mb:.2f} MB",
+        "compress_audio_ffmpeg_warning": "ffmpeg not found — sending uncompressed audio.",
+        "compress_audio_failed_warning": "Compression failed, sending the original file instead: {error}",
+        "transcription_progress": "Transcribing…",
+        "transcription_done": "Transcription complete",
+        "transcription_failed": "Transcription failed: {error}",
+        "no_speech_detected": "No conversation detected in the audio.",
+        "summary_progress": "Summarizing…",
+        "summary_done": "Summary complete",
+        "summary_quota_error": "The summary model is temporarily unavailable (quota limit reached, 20 requests/day). Please try again later.",
+        "summary_unavailable_error": "Gemini is temporarily overloaded (503). Please try again in a moment.",
+        "summary_failed": "Summary failed: {error}",
+        "summary_header": "Summary",
+        "full_transcript": "Full transcript",
+        "save_drive_spinner": "Saving to Google Drive…",
+        "save_drive_success": "Saved to Google Drive.",
+        "save_drive_failed": "Drive save failed: {error}",
+        "download_summary": "Download summary",
+        "history_header": "History",
+        "history_empty": "No saved summaries.",
+        "download_file": "Download",
+        "generic_error": "Error",
+        "history_failed": "Unable to load history: {error}",
+        "language_auto": "Auto-detect",
+        "language_fr": "French",
+        "language_en": "English",
+        "language_he": "Hebrew",
+        "ui_language_fr": "Français",
+        "ui_language_en": "English",
+    },
 }
 
 DEFAULT_PROMPT = """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
@@ -54,6 +177,26 @@ def get_default_prompt() -> str:
     return st.secrets.get("SUMMARIZATION_PROMPT", DEFAULT_PROMPT)
 
 
+def get_ui_language() -> str:
+    return st.session_state.get("ui_language", "fr")
+
+
+def tr(key: str, **kwargs) -> str:
+    language = get_ui_language()
+    template = TRANSLATIONS.get(language, TRANSLATIONS["fr"]).get(key, key)
+    return template.format(**kwargs)
+
+
+def get_language_label(language_key: str, context: str = "transcription") -> str:
+    if context == "transcription" and language_key == "auto":
+        return tr("language_auto")
+    return tr(f"language_{language_key}")
+
+
+def get_ui_language_label(language_code: str) -> str:
+    return tr(f"ui_language_{language_code}")
+
+
 def build_summary_prompt(transcript: str, input_language: str, output_language: str) -> str:
     if input_language == "auto-detected from the transcript":
         transcript_language_instruction = "- The transcript language was auto-detected."
@@ -70,10 +213,10 @@ def build_summary_prompt(transcript: str, input_language: str, output_language: 
     )
 
 
-def get_summary_input_language_label(transcription_language_label: str) -> str:
-    if transcription_language_label == "Auto-detect":
+def get_summary_input_language_label(transcription_language_key: str) -> str:
+    if transcription_language_key == "auto":
         return "auto-detected from the transcript"
-    return transcription_language_label
+    return SUMMARY_OUTPUT_LANGUAGES[transcription_language_key]
 
 
 def get_gemini_keys() -> list[str]:
@@ -215,7 +358,7 @@ def transcribe_with_keepalive(audio_bytes: bytes, filename: str, model: str, lan
     return run_with_keepalive(
         transcribe_with_retry, audio_bytes, filename, model, language,
         progress=progress, estimated_seconds=estimated,
-        label="Transcription en cours…", done_label="Transcription terminée",
+        label=tr("transcription_progress"), done_label=tr("transcription_done"),
     )
 
 
@@ -268,7 +411,7 @@ def summarize_with_keepalive(transcript: str, model: str, input_language: str, o
     return run_with_keepalive(
         summarize_with_retry, transcript, model, input_language, output_language,
         progress=progress, estimated_seconds=estimated,
-        label="Résumé en cours…", done_label="Résumé terminé",
+        label=tr("summary_progress"), done_label=tr("summary_done"),
     )
 
 
@@ -282,6 +425,29 @@ def build_download_text(transcript: str, summary: str, with_transcript: bool) ->
     if with_transcript:
         text += f"\n---\n\n## TRANSCRIPT\n\n{transcript}\n"
     return text
+
+
+def build_processing_key(
+    audio_bytes: bytes,
+    audio_filename: str,
+    transcription_language_key: str,
+    summary_language_key: str,
+    compress_enabled: bool,
+    groq_model: str,
+    gemini_model: str,
+) -> str:
+    digest = hashlib.sha256(audio_bytes)
+    for part in (
+        audio_filename,
+        transcription_language_key,
+        summary_language_key,
+        str(compress_enabled),
+        groq_model,
+        gemini_model,
+    ):
+        digest.update(b"\0")
+        digest.update(part.encode("utf-8"))
+    return digest.hexdigest()
 
 
 def make_flow() -> Flow:
@@ -371,11 +537,11 @@ if "code" in params and "credentials" not in st.session_state:
 
 # ── Page setup ───────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="Speech2Summary", page_icon="🎙️", layout="centered")
+st.set_page_config(page_title=tr("page_title"), page_icon="🎙️", layout="centered")
 col_title, col_btn = st.columns([4, 1])
 with col_title:
-    st.title("Mon Assistant Perso")
-    st.caption("Enregistrez ou téléversez un fichier audio → transcription → création d'un résumé structuré")
+    st.title(tr("app_title"))
+    st.caption(tr("app_caption"))
 with col_btn:
     st.write("")  # alignement vertical
     btn_nouveau = st.empty()
@@ -388,54 +554,62 @@ rk = st.session_state.reset_key
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("Settings")
+    st.header(tr("settings_header"))
+    st.selectbox(
+        tr("ui_language_label"),
+        options=UI_LANGUAGE_OPTIONS,
+        format_func=get_ui_language_label,
+        key="ui_language",
+    )
     groq_model = GROQ_MODELS[0]
-    transcription_language_label = st.selectbox(
-        "Langue de de l'enregistrement",
+    transcription_language_key = st.selectbox(
+        tr("transcription_language_label"),
         options=list(TRANSCRIPTION_LANGUAGES.keys()),
         index=0,
-        help="Aide le modèle de transcription en indiquant la langue parlée principale.",
+        format_func=lambda key: get_language_label(key, context="transcription"),
+        help=tr("transcription_language_help"),
     )
-    transcription_language = TRANSCRIPTION_LANGUAGES.get(transcription_language_label, None)
+    transcription_language = TRANSCRIPTION_LANGUAGES.get(transcription_language_key, None)
     gemini_model = GEMINI_MODELS[0]
-    summary_language_label = st.selectbox(
-        "Langue du résumé",
+    summary_language_key = st.selectbox(
+        tr("summary_language_label"),
         options=list(SUMMARY_OUTPUT_LANGUAGES.keys()),
         index=0,
-        help="Force la langue de sortie du résumé, indépendamment de la langue de la transcription.",
+        format_func=lambda key: get_language_label(key, context="summary"),
+        help=tr("summary_language_help"),
     )
-    summary_output_language = SUMMARY_OUTPUT_LANGUAGES.get(summary_language_label, "French")
-    auto_transcribe = st.checkbox("Résumer automatiquement", value=True)
-    include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
+    summary_output_language = SUMMARY_OUTPUT_LANGUAGES.get(summary_language_key, "French")
+    auto_transcribe = st.checkbox(tr("auto_summarize"), value=True)
+    include_transcript = st.checkbox(tr("include_transcript"), value=False)
     compress_enabled = st.checkbox(
-        "Compresser l'audio avant transcription",
+        tr("compress_audio"),
         value=True,
-        help="Réencode en Opus mono 16 kHz (≈ 16 kbps) via ffmpeg pour les fichiers ≥ 5 Mo. Réduit fortement la taille sans perte de précision pour Whisper.",
+        help=tr("compress_audio_help"),
     )
     drive_configured = all(k in st.secrets for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
     if drive_configured:
         st.divider()
         if "credentials" in st.session_state:
-            st.success("Google Drive connecté")
-            if st.button("Déconnecter Drive"):
+            st.success(tr("drive_connected"))
+            if st.button(tr("disconnect_drive")):
                 del st.session_state["credentials"]
                 st.rerun()
         else:
             flow = make_flow()
             auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
             st.session_state.oauth_state = state
-            st.link_button("Connecter Google Drive", auth_url)
+            st.link_button(tr("connect_drive"), auth_url)
 
 # ── Audio input ──────────────────────────────────────────────────────────────
 
-tab_record, tab_upload = st.tabs(["Enregistrer", "Envoyer un fichier audio"])
+tab_record, tab_upload = st.tabs([tr("tab_record"), tr("tab_upload")])
 
 with tab_record:
     if not hasattr(st, "audio_input"):
-        st.error("Enregistrement non disponible — mettez Streamlit à jour : `pip install --upgrade streamlit` (version 1.31+ requise)")
+        st.error(tr("recording_unavailable"))
     else:
         with st.container(border=True):
-            audio_input = st.audio_input("Cliquez sur le micro ci-dessous pour démarrer, cliquez à nouveau pour arrêter", key=f"rec_{rk}")
+            audio_input = st.audio_input(tr("recording_input_label"), key=f"rec_{rk}")
 
         if audio_input:
             st.audio(audio_input)
@@ -443,7 +617,7 @@ with tab_record:
             audio_filename = "recording.wav"
 
 with tab_upload:
-    uploaded = st.file_uploader("Téléverser un fichier audio", type=UPLOAD_TYPES, key=f"upl_{rk}")
+    uploaded = st.file_uploader(tr("upload_audio_label"), type=UPLOAD_TYPES, key=f"upl_{rk}")
     if uploaded:
         audio_filename = uploaded.name
         audio_bytes = uploaded.read()
@@ -454,70 +628,86 @@ with tab_upload:
 
 audio_ready = "audio_bytes" in dir() and audio_bytes
 
+processing_key = None
+result_cache: dict[str, dict[str, str]] = st.session_state.setdefault("result_cache", {})
+cached_result: dict[str, str] | None = None
 if audio_ready:
-    btn_nouveau.button("🔄 Nouveau", on_click=reset, use_container_width=True)
+    processing_key = build_processing_key(
+        audio_bytes,
+        audio_filename,
+        transcription_language_key,
+        summary_language_key,
+        compress_enabled,
+        groq_model,
+        gemini_model,
+    )
+    cached_result = result_cache.get(processing_key)
+
+if audio_ready:
+    btn_nouveau.button(tr("new_button"), on_click=reset, use_container_width=True)
 
 if not auto_transcribe:
-    run = st.button("Transcrire & Résumer", type="primary", disabled=not audio_ready)
+    run = st.button(tr("run_button"), type="primary", disabled=not audio_ready)
 else:
-    run = bool(audio_ready)
+    run = bool(audio_ready and cached_result is None)
 
 # ── Transcription & summary ──────────────────────────────────────────────────
 
 if run and audio_ready:
+    assert processing_key is not None
     original_size = len(audio_bytes)
     requires_audio_extraction = is_video_upload(audio_filename)
-    summary_input_language = get_summary_input_language_label(transcription_language_label)
+    summary_input_language = get_summary_input_language_label(transcription_language_key)
     log_event("run_started", source=audio_filename, bytes=original_size, drive_connected="credentials" in st.session_state)
 
     if requires_audio_extraction:
-        with st.spinner("Extraction de la piste audio du fichier vidéo…"):
+        with st.spinner(tr("extract_audio_spinner")):
             t0 = time.monotonic()
             try:
                 audio_bytes, audio_filename = transcode_audio_for_transcription(audio_bytes, audio_filename)
-                st.caption(f"Piste audio extraite ({len(audio_bytes) / 1_000_000:.2f} Mo)")
+                st.caption(tr("extract_audio_caption", size_mb=len(audio_bytes) / 1_000_000))
                 log_event("extract_audio_done", before_bytes=original_size, after_bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2))
             except FileNotFoundError:
                 log_event("extract_audio_failed", reason="ffmpeg_not_found")
-                st.error("Impossible de traiter le fichier vidéo : ffmpeg est introuvable.")
+                st.error(tr("extract_audio_ffmpeg_error"))
                 st.stop()
             except subprocess.CalledProcessError as e:
                 log_event("extract_audio_failed", error=e.stderr.decode(errors="ignore")[:200])
-                st.error(f"Impossible d'extraire l'audio du fichier vidéo : {e.stderr.decode(errors='ignore')[:200]}")
+                st.error(tr("extract_audio_failed_error", error=e.stderr.decode(errors="ignore")[:200]))
                 st.stop()
 
     if compress_enabled and not requires_audio_extraction and len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
-        with st.spinner(f"Compression de l'audio ({len(audio_bytes) / 1_000_000:.1f} Mo)…"):
+        with st.spinner(tr("compress_audio_spinner", size_mb=len(audio_bytes) / 1_000_000)):
             t0 = time.monotonic()
             try:
                 audio_bytes, audio_filename = compress_audio(audio_bytes, audio_filename)
-                st.caption(f"Audio compressé à {len(audio_bytes) / 1_000_000:.2f} Mo")
+                st.caption(tr("compress_audio_caption", size_mb=len(audio_bytes) / 1_000_000))
                 log_event("compress_done", before_bytes=original_size, after_bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2))
             except FileNotFoundError:
-                st.warning("ffmpeg introuvable — envoi de l'audio non compressé.")
+                st.warning(tr("compress_audio_ffmpeg_warning"))
                 log_event("compress_skipped", reason="ffmpeg_not_found")
             except subprocess.CalledProcessError as e:
-                st.warning(f"Compression échouée, envoi du fichier original : {e.stderr.decode(errors='ignore')[:200]}")
+                st.warning(tr("compress_audio_failed_warning", error=e.stderr.decode(errors="ignore")[:200]))
                 log_event("compress_failed", error=e.stderr.decode(errors="ignore")[:200])
 
-    progress_bar = st.progress(0.0, text="Transcription en cours…")
+    progress_bar = st.progress(0.0, text=tr("transcription_progress"))
     t0 = time.monotonic()
     try:
         transcript = transcribe_with_keepalive(audio_bytes, audio_filename, groq_model, transcription_language, progress_bar)
     except Exception as e:
         progress_bar.empty()
-        log_event("transcribe_failed", model=groq_model, language=transcription_language_label, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), error=str(e)[:300])
-        st.error(f"La transcription a échoué : {e}")
+        log_event("transcribe_failed", model=groq_model, language=transcription_language_key, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), error=str(e)[:300])
+        st.error(tr("transcription_failed", error=e))
         st.stop()
     progress_bar.empty()
-    log_event("transcribe_done", model=groq_model, language=transcription_language_label, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), transcript_chars=len(transcript))
+    log_event("transcribe_done", model=groq_model, language=transcription_language_key, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), transcript_chars=len(transcript))
 
     if not transcript:
-        st.warning("Pas de conversation détectée dans l'audio.")
+        st.warning(tr("no_speech_detected"))
         log_event("transcribe_empty")
         st.stop()
 
-    summary_progress = st.progress(0.0, text="Résumé en cours…")
+    summary_progress = st.progress(0.0, text=tr("summary_progress"))
     t0 = time.monotonic()
     try:
         summary = summarize_with_keepalive(transcript, gemini_model, summary_input_language, summary_output_language, summary_progress)
@@ -527,37 +717,50 @@ if run and audio_ready:
         log_event("summarize_failed", model=gemini_model, input_language=summary_input_language, output_language=summary_output_language, error=str(e)[:300], duration_s=round(time.monotonic() - t0, 2))
         err = str(e)
         if "RESOURCE_EXHAUSTED" in err:
-            st.error("Le modèle de résumé est temporairement indisponible (limite de quota atteinte, 20 requêtes/jour). Veuillez réessayer plus tard.")
+            st.error(tr("summary_quota_error"))
         elif "UNAVAILABLE" in err or "503" in err:
-            st.error("Gemini est temporairement surchargé (503). Réessayez dans quelques instants.")
+            st.error(tr("summary_unavailable_error"))
         else:
-            st.error(f"Échec du résumé : {e}")
+            st.error(tr("summary_failed", error=e))
         st.stop()
     summary_progress.empty()
 
-    st.subheader("Résumé")
-    st.markdown(summary)
+    result_cache[processing_key] = {
+        "transcript": transcript,
+        "summary": summary,
+        "filename": f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+    }
+    cached_result = result_cache[processing_key]
 
-    with st.expander("Transcript complet"):
-        st.write(transcript)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     content = build_download_text(transcript, summary, include_transcript)
-    filename = f"summary_{timestamp}.txt"
+    filename = cached_result["filename"]
 
     if "credentials" in st.session_state:
-        with st.spinner("Sauvegarde sur Google Drive…"):
+        with st.spinner(tr("save_drive_spinner")):
             try:
                 creds = Credentials(**st.session_state.credentials)
                 save_to_drive(creds, content, filename)
-                st.success("Sauvegardé sur Google Drive.")
+                st.success(tr("save_drive_success"))
                 log_event("drive_saved", filename=filename, bytes=len(content))
             except Exception as e:
-                st.warning(f"Sauvegarde Drive échouée : {e}")
+                st.warning(tr("save_drive_failed", error=e))
                 log_event("drive_save_failed", error=str(e)[:300])
 
+
+if audio_ready and cached_result:
+    transcript = cached_result["transcript"]
+    summary = cached_result["summary"]
+    filename = cached_result["filename"]
+    content = build_download_text(transcript, summary, include_transcript)
+
+    st.subheader(tr("summary_header"))
+    st.markdown(summary)
+
+    with st.expander(tr("full_transcript")):
+        st.write(transcript)
+
     st.download_button(
-        label="Télécharger le résumé",
+        label=tr("download_summary"),
         data=content,
         file_name=filename,
         mime="text/plain",
@@ -567,12 +770,12 @@ if run and audio_ready:
 
 if "credentials" in st.session_state:
     st.divider()
-    st.subheader("Historique")
+    st.subheader(tr("history_header"))
     try:
         creds = Credentials(**st.session_state.credentials)
         files = list_drive_files(creds)
         if not files:
-            st.caption("Aucun résumé enregistré.")
+            st.caption(tr("history_empty"))
         else:
             for f in files:
                 created = f["createdTime"][:10]
@@ -583,13 +786,13 @@ if "credentials" in st.session_state:
                     try:
                         data = download_drive_file(creds, f["id"])
                         st.download_button(
-                            label="Télécharger",
+                            label=tr("download_file"),
                             data=data,
                             file_name=f["name"],
                             mime="text/plain",
                             key=f["id"],
                         )
                     except Exception:
-                        st.caption("Erreur")
+                        st.caption(tr("generic_error"))
     except Exception as e:
-        st.caption(f"Impossible de charger l'historique : {e}")
+        st.caption(tr("history_failed", error=e))
