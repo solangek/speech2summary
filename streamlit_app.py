@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -22,9 +23,19 @@ GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 UPLOAD_TYPES = ["wav", "mp3", "m4a", "m4v", "ogg", "flac", "webm"]
 VIDEO_EXTENSIONS = {".m4v"}
+TRANSCRIPTION_LANGUAGES = {
+    "Auto-detect": None,
+    "Français": "fr",
+    "English": "en",
+    "עברית": "he",
+}
+SUMMARY_OUTPUT_LANGUAGES = {
+    "Français": "French",
+    "English": "English",
+    "עברית": "Hebrew",
+}
 
 DEFAULT_PROMPT = """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
-Respond in the same language as the transcript.
 
 Format your response EXACTLY as:
 
@@ -41,6 +52,28 @@ Format your response EXACTLY as:
 
 def get_default_prompt() -> str:
     return st.secrets.get("SUMMARIZATION_PROMPT", DEFAULT_PROMPT)
+
+
+def build_summary_prompt(transcript: str, input_language: str, output_language: str) -> str:
+    if input_language == "auto-detected from the transcript":
+        transcript_language_instruction = "- The transcript language was auto-detected."
+    else:
+        transcript_language_instruction = f"- The transcript language is {input_language}."
+
+    return (
+        f"{get_default_prompt()}\n\n"
+        f"Important:\n"
+        f"{transcript_language_instruction}\n"
+        f"- Write the final summary in {output_language}.\n"
+        f"- Do not translate or alter the source transcript itself.\n\n"
+        f"Transcript:\n{transcript}"
+    )
+
+
+def get_summary_input_language_label(transcription_language_label: str) -> str:
+    if transcription_language_label == "Auto-detect":
+        return "auto-detected from the transcript"
+    return transcription_language_label
 
 
 def get_gemini_keys() -> list[str]:
@@ -125,8 +158,8 @@ def transcode_audio_for_transcription(audio_bytes: bytes, input_filename: str) -
             return transcoded.read(), output_name
     finally:
         for path in (input_path, output_path):
-            if path and os.path.exists(path):
-                os.unlink(path)
+            if path and Path(path).exists():
+                Path(path).unlink()
 
 
 def compress_audio(audio_bytes: bytes, input_filename: str) -> tuple[bytes, str]:
@@ -137,13 +170,19 @@ def is_video_upload(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() in VIDEO_EXTENSIONS
 
 
-def transcribe_with_retry(audio_bytes: bytes, filename: str, model: str, max_attempts: int = 4) -> str:
+def transcribe_with_retry(audio_bytes: bytes, filename: str, model: str, language: str | None, max_attempts: int = 4) -> str:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     for attempt in range(max_attempts):
         try:
+            request_kwargs = {
+                "file": (filename, audio_bytes),
+                "model": model,
+            }
+            if language:
+                request_kwargs["language"] = language
+
             result = client.audio.transcriptions.create(
-                file=(filename, audio_bytes),
-                model=model,
+                **request_kwargs,
             )
             return result.text.strip()
         except RateLimitError as e:
@@ -171,25 +210,25 @@ def run_with_keepalive(fn, *args, progress, estimated_seconds: float, label: str
         return future.result()
 
 
-def transcribe_with_keepalive(audio_bytes: bytes, filename: str, model: str, progress) -> str:
+def transcribe_with_keepalive(audio_bytes: bytes, filename: str, model: str, language: str | None, progress) -> str:
     estimated = max(15.0, len(audio_bytes) / 1_500_000 * 15)
     return run_with_keepalive(
-        transcribe_with_retry, audio_bytes, filename, model,
+        transcribe_with_retry, audio_bytes, filename, model, language,
         progress=progress, estimated_seconds=estimated,
         label="Transcription en cours…", done_label="Transcription terminée",
     )
 
 
-def transcribe(audio_bytes: bytes, filename: str, model: str) -> str:
-    return transcribe_with_retry(audio_bytes, filename, model)
+def transcribe(audio_bytes: bytes, filename: str, model: str, language: str | None) -> str:
+    return transcribe_with_retry(audio_bytes, filename, model, language)
 
 
-def summarize_with_retry(transcript: str, model: str, max_attempts: int | None = None) -> str:
+def summarize_with_retry(transcript: str, model: str, input_language: str, output_language: str, max_attempts: int | None = None) -> str:
     keys = get_gemini_keys()
     if max_attempts is None:
         max_attempts = len(keys)
 
-    prompt = f"{get_default_prompt()}\n\nTranscript:\n{transcript}"
+    prompt = build_summary_prompt(transcript, input_language, output_language)
     last_error: Exception | None = None
 
     for attempt in range(max_attempts):
@@ -199,7 +238,7 @@ def summarize_with_retry(transcript: str, model: str, max_attempts: int | None =
 
         try:
             response = client.models.generate_content(model=model, contents=prompt)
-            return response.text
+            return response.text or ""
         except Exception as e:
             last_error = e
             msg = str(e)
@@ -224,17 +263,17 @@ def summarize_with_retry(transcript: str, model: str, max_attempts: int | None =
     return ""
 
 
-def summarize_with_keepalive(transcript: str, model: str, progress) -> str:
+def summarize_with_keepalive(transcript: str, model: str, input_language: str, output_language: str, progress) -> str:
     estimated = max(8.0, len(transcript) / 6000 * 2)
     return run_with_keepalive(
-        summarize_with_retry, transcript, model,
+        summarize_with_retry, transcript, model, input_language, output_language,
         progress=progress, estimated_seconds=estimated,
         label="Résumé en cours…", done_label="Résumé terminé",
     )
 
 
-def summarize(transcript: str, model: str) -> str:
-    return summarize_with_retry(transcript, model)
+def summarize(transcript: str, model: str, input_language: str, output_language: str) -> str:
+    return summarize_with_retry(transcript, model, input_language, output_language)
 
 
 def build_download_text(transcript: str, summary: str, with_transcript: bool) -> str:
@@ -350,8 +389,22 @@ rk = st.session_state.reset_key
 
 with st.sidebar:
     st.header("Settings")
-    groq_model = st.selectbox("Transcription model (Groq)", GROQ_MODELS)
-    gemini_model = st.selectbox("Summarization model (Gemini)", GEMINI_MODELS)
+    groq_model = GROQ_MODELS[0]
+    transcription_language_label = st.selectbox(
+        "Langue de de l'enregistrement",
+        options=list(TRANSCRIPTION_LANGUAGES.keys()),
+        index=0,
+        help="Aide le modèle de transcription en indiquant la langue parlée principale.",
+    )
+    transcription_language = TRANSCRIPTION_LANGUAGES.get(transcription_language_label, None)
+    gemini_model = GEMINI_MODELS[0]
+    summary_language_label = st.selectbox(
+        "Langue du résumé",
+        options=list(SUMMARY_OUTPUT_LANGUAGES.keys()),
+        index=0,
+        help="Force la langue de sortie du résumé, indépendamment de la langue de la transcription.",
+    )
+    summary_output_language = SUMMARY_OUTPUT_LANGUAGES.get(summary_language_label, "French")
     auto_transcribe = st.checkbox("Résumer automatiquement", value=True)
     include_transcript = st.checkbox("Inclure la transcription dans le fichier", value=False)
     compress_enabled = st.checkbox(
@@ -393,11 +446,11 @@ with tab_upload:
     uploaded = st.file_uploader("Téléverser un fichier audio", type=UPLOAD_TYPES, key=f"upl_{rk}")
     if uploaded:
         audio_filename = uploaded.name
-        if is_video_upload(audio_filename):
-            st.video(uploaded)
-        else:
-            st.audio(uploaded)
         audio_bytes = uploaded.read()
+        if is_video_upload(audio_filename):
+            st.video(audio_bytes)
+        else:
+            st.audio(audio_bytes)
 
 audio_ready = "audio_bytes" in dir() and audio_bytes
 
@@ -414,6 +467,7 @@ else:
 if run and audio_ready:
     original_size = len(audio_bytes)
     requires_audio_extraction = is_video_upload(audio_filename)
+    summary_input_language = get_summary_input_language_label(transcription_language_label)
     log_event("run_started", source=audio_filename, bytes=original_size, drive_connected="credentials" in st.session_state)
 
     if requires_audio_extraction:
@@ -449,14 +503,14 @@ if run and audio_ready:
     progress_bar = st.progress(0.0, text="Transcription en cours…")
     t0 = time.monotonic()
     try:
-        transcript = transcribe_with_keepalive(audio_bytes, audio_filename, groq_model, progress_bar)
+        transcript = transcribe_with_keepalive(audio_bytes, audio_filename, groq_model, transcription_language, progress_bar)
     except Exception as e:
         progress_bar.empty()
-        log_event("transcribe_failed", model=groq_model, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), error=str(e)[:300])
+        log_event("transcribe_failed", model=groq_model, language=transcription_language_label, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), error=str(e)[:300])
         st.error(f"La transcription a échoué : {e}")
         st.stop()
     progress_bar.empty()
-    log_event("transcribe_done", model=groq_model, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), transcript_chars=len(transcript))
+    log_event("transcribe_done", model=groq_model, language=transcription_language_label, bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2), transcript_chars=len(transcript))
 
     if not transcript:
         st.warning("Pas de conversation détectée dans l'audio.")
@@ -466,11 +520,11 @@ if run and audio_ready:
     summary_progress = st.progress(0.0, text="Résumé en cours…")
     t0 = time.monotonic()
     try:
-        summary = summarize_with_keepalive(transcript, gemini_model, summary_progress)
-        log_event("summarize_done", model=gemini_model, transcript_chars=len(transcript), summary_chars=len(summary or ""), duration_s=round(time.monotonic() - t0, 2))
+        summary = summarize_with_keepalive(transcript, gemini_model, summary_input_language, summary_output_language, summary_progress)
+        log_event("summarize_done", model=gemini_model, input_language=summary_input_language, output_language=summary_output_language, transcript_chars=len(transcript), summary_chars=len(summary or ""), duration_s=round(time.monotonic() - t0, 2))
     except Exception as e:
         summary_progress.empty()
-        log_event("summarize_failed", model=gemini_model, error=str(e)[:300], duration_s=round(time.monotonic() - t0, 2))
+        log_event("summarize_failed", model=gemini_model, input_language=summary_input_language, output_language=summary_output_language, error=str(e)[:300], duration_s=round(time.monotonic() - t0, 2))
         err = str(e)
         if "RESOURCE_EXHAUSTED" in err:
             st.error("Le modèle de résumé est temporairement indisponible (limite de quota atteinte, 20 requêtes/jour). Veuillez réessayer plus tard.")
