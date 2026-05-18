@@ -1,7 +1,9 @@
 import json
 import logging
+import os
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -18,6 +20,8 @@ from groq import Groq, RateLimitError
 GROQ_MODELS = ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"]
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+UPLOAD_TYPES = ["wav", "mp3", "m4a", "m4v", "ogg", "flac", "webm"]
+VIDEO_EXTENSIONS = {".m4v"}
 
 DEFAULT_PROMPT = """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
 Respond in the same language as the transcript.
@@ -90,19 +94,47 @@ def log_event(event: str, **fields) -> None:
 COMPRESS_THRESHOLD_BYTES = 5_000_000
 
 
-def compress_audio(audio_bytes: bytes) -> tuple[bytes, str]:
-    result = subprocess.run(
-        [
-            "ffmpeg", "-loglevel", "error", "-i", "pipe:0",
-            "-ac", "1", "-ar", "16000",
-            "-c:a", "libopus", "-b:a", "16k",
-            "-f", "ogg", "pipe:1",
-        ],
-        input=audio_bytes,
-        capture_output=True,
-        check=True,
-    )
-    return result.stdout, "recording.ogg"
+def transcode_audio_for_transcription(audio_bytes: bytes, input_filename: str) -> tuple[bytes, str]:
+    input_suffix = os.path.splitext(input_filename)[1] or ".bin"
+    output_name = f"{os.path.splitext(os.path.basename(input_filename))[0] or 'recording'}.ogg"
+    input_path = None
+    output_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=input_suffix, delete=False) as input_tmp:
+            input_tmp.write(audio_bytes)
+            input_path = input_tmp.name
+
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as output_tmp:
+            output_path = output_tmp.name
+
+        subprocess.run(
+            [
+                "ffmpeg", "-loglevel", "error", "-y",
+                "-i", input_path,
+                "-vn",
+                "-ac", "1", "-ar", "16000",
+                "-c:a", "libopus", "-b:a", "16k",
+                output_path,
+            ],
+            capture_output=True,
+            check=True,
+        )
+
+        with open(output_path, "rb") as transcoded:
+            return transcoded.read(), output_name
+    finally:
+        for path in (input_path, output_path):
+            if path and os.path.exists(path):
+                os.unlink(path)
+
+
+def compress_audio(audio_bytes: bytes, input_filename: str) -> tuple[bytes, str]:
+    return transcode_audio_for_transcription(audio_bytes, input_filename)
+
+
+def is_video_upload(filename: str) -> bool:
+    return os.path.splitext(filename)[1].lower() in VIDEO_EXTENSIONS
 
 
 def transcribe_with_retry(audio_bytes: bytes, filename: str, model: str, max_attempts: int = 4) -> str:
@@ -358,11 +390,14 @@ with tab_record:
             audio_filename = "recording.wav"
 
 with tab_upload:
-    uploaded = st.file_uploader("Téléverser un fichier audio", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"], key=f"upl_{rk}")
+    uploaded = st.file_uploader("Téléverser un fichier audio", type=UPLOAD_TYPES, key=f"upl_{rk}")
     if uploaded:
-        st.audio(uploaded)
-        audio_bytes = uploaded.read()
         audio_filename = uploaded.name
+        if is_video_upload(audio_filename):
+            st.video(uploaded)
+        else:
+            st.audio(uploaded)
+        audio_bytes = uploaded.read()
 
 audio_ready = "audio_bytes" in dir() and audio_bytes
 
@@ -378,13 +413,30 @@ else:
 
 if run and audio_ready:
     original_size = len(audio_bytes)
+    requires_audio_extraction = is_video_upload(audio_filename)
     log_event("run_started", source=audio_filename, bytes=original_size, drive_connected="credentials" in st.session_state)
 
-    if compress_enabled and len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
+    if requires_audio_extraction:
+        with st.spinner("Extraction de la piste audio du fichier vidéo…"):
+            t0 = time.monotonic()
+            try:
+                audio_bytes, audio_filename = transcode_audio_for_transcription(audio_bytes, audio_filename)
+                st.caption(f"Piste audio extraite ({len(audio_bytes) / 1_000_000:.2f} Mo)")
+                log_event("extract_audio_done", before_bytes=original_size, after_bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2))
+            except FileNotFoundError:
+                log_event("extract_audio_failed", reason="ffmpeg_not_found")
+                st.error("Impossible de traiter le fichier vidéo : ffmpeg est introuvable.")
+                st.stop()
+            except subprocess.CalledProcessError as e:
+                log_event("extract_audio_failed", error=e.stderr.decode(errors="ignore")[:200])
+                st.error(f"Impossible d'extraire l'audio du fichier vidéo : {e.stderr.decode(errors='ignore')[:200]}")
+                st.stop()
+
+    if compress_enabled and not requires_audio_extraction and len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
         with st.spinner(f"Compression de l'audio ({len(audio_bytes) / 1_000_000:.1f} Mo)…"):
             t0 = time.monotonic()
             try:
-                audio_bytes, audio_filename = compress_audio(audio_bytes)
+                audio_bytes, audio_filename = compress_audio(audio_bytes, audio_filename)
                 st.caption(f"Audio compressé à {len(audio_bytes) / 1_000_000:.2f} Mo")
                 log_event("compress_done", before_bytes=original_size, after_bytes=len(audio_bytes), duration_s=round(time.monotonic() - t0, 2))
             except FileNotFoundError:
