@@ -32,9 +32,10 @@ TRANSCRIPTION_LANGUAGES = {
     "he": "he",
 }
 SUMMARY_OUTPUT_LANGUAGES = {
-    "fr": "French",
+    "fr": "French (Français)",
     "en": "English",
     "he": "Hebrew",
+    "ru" : "Russian"
 }
 
 TRANSLATIONS = {
@@ -93,7 +94,8 @@ TRANSLATIONS = {
         "language_auto": "Détection automatique",
         "language_fr": "Français",
         "language_en": "Anglais",
-        "language_he": "Hébreu",
+        "language_he": "Hébreu (עברית)",
+        "language_ru": "Russe (Русский)",
         "ui_language_fr": "Français",
         "ui_language_en": "English",
     },
@@ -152,7 +154,8 @@ TRANSLATIONS = {
         "language_auto": "Auto-detect",
         "language_fr": "French",
         "language_en": "English",
-        "language_he": "Hebrew",
+        "language_he": "Hebrew (עברית)",
+        "language_ru": "Russian (Русский)",
         "ui_language_fr": "Français",
         "ui_language_en": "English",
     },
