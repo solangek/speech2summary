@@ -171,8 +171,7 @@ TRANSLATIONS = {
     },
 }
 
-DEFAULT_PROMPTS = {
-    "general": """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
+DEFAULT_PROMPT = """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
 
 Format your response EXACTLY as:
 
@@ -184,41 +183,20 @@ Format your response EXACTLY as:
 - [item 1] (or "None identified" if there are none)
 
 ## Decisions Made
-- [decision 1] (or "None identified" if there are none)""",
-    "veterinarian": """Tu es docteur vétérinaire. Utilise la terminologie médicale correcte. Résume la transcription suivante, n'invente pas de faits, complète si besoin le diagnostic et son traitement au format:
-1. MOTIF DE CONSULTATION
-2. ANAMNÈSE
-3. COMMÉMORATIFS
-4. EXAMEN CLINIQUE
-5. PLAN DIAGNOSTIQUE ET THÉRAPEUTIQUE
-- Hypothèses diagnostiques
-- Traitement réalisé en consultation
-- Traitement prescrit
-- Plan""",
-    "developer": """You are a software development assistant. Analyze the following transcript (technical discussion, standup, or planning meeting) and provide a structured summary.
-
-Format your response EXACTLY as:
-
-## Technical Decisions
-- [decision 1] (or "None identified" if there are none)
-
-## Action Items
-- [task 1 — owner if mentioned] (or "None identified" if there are none)
-
-## Open Questions / Blockers
-- [item 1] (or "None identified" if there are none)""",
-}
+- [decision 1] (or "None identified" if there are none)"""
 
 
 def get_prompt_modes() -> dict[str, str]:
-    """Assistant modes (mode key → prompt). Secrets override/extend the built-ins."""
-    modes = dict(DEFAULT_PROMPTS)
+    """Assistant modes (mode key → prompt), configured in secrets.
+
+    Falls back to a single built-in "general" mode when nothing is configured.
+    """
     configured = st.secrets.get("SUMMARIZATION_PROMPT")
     if isinstance(configured, str):
-        modes["custom"] = configured  # backward compat with the legacy single-string secret
-    elif configured:
-        modes.update(configured)
-    return modes
+        return {"custom": configured}  # backward compat with the legacy single-string secret
+    if configured:
+        return dict(configured)
+    return {"general": DEFAULT_PROMPT}
 
 
 def get_ui_language() -> str:
