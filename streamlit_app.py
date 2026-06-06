@@ -49,6 +49,11 @@ TRANSLATIONS = {
         "transcription_language_help": "Aide le modèle de transcription en indiquant la langue parlée principale.",
         "summary_language_label": "Langue du résumé",
         "summary_language_help": "Force la langue de sortie du résumé, indépendamment de la langue de la transcription.",
+        "assistant_mode_label": "Type d'assistant",
+        "assistant_mode_help": "Choisit le style de résumé (le prompt) appliqué à la transcription.",
+        "assistant_mode_general": "Assistant général",
+        "assistant_mode_veterinarian": "Vétérinaire",
+        "assistant_mode_developer": "Développeur",
         "auto_summarize": "Résumer automatiquement",
         "include_transcript": "Inclure la transcription dans le fichier",
         "compress_audio": "Compresser l'audio avant transcription",
@@ -109,6 +114,11 @@ TRANSLATIONS = {
         "transcription_language_help": "Helps the transcription model by indicating the main spoken language.",
         "summary_language_label": "Summary language",
         "summary_language_help": "Forces the summary output language independently from the transcription language.",
+        "assistant_mode_label": "Assistant type",
+        "assistant_mode_help": "Selects the summary style (the prompt) applied to the transcript.",
+        "assistant_mode_general": "General assistant",
+        "assistant_mode_veterinarian": "Veterinarian",
+        "assistant_mode_developer": "Developer",
         "auto_summarize": "Summarize automatically",
         "include_transcript": "Include transcript in the file",
         "compress_audio": "Compress audio before transcription",
@@ -161,7 +171,8 @@ TRANSLATIONS = {
     },
 }
 
-DEFAULT_PROMPT = """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
+DEFAULT_PROMPTS = {
+    "general": """You are a meeting/lecture assistant. Analyze the following transcript and provide a structured summary.
 
 Format your response EXACTLY as:
 
@@ -173,11 +184,41 @@ Format your response EXACTLY as:
 - [item 1] (or "None identified" if there are none)
 
 ## Decisions Made
-- [decision 1] (or "None identified" if there are none)"""
+- [decision 1] (or "None identified" if there are none)""",
+    "veterinarian": """Tu es docteur vétérinaire. Utilise la terminologie médicale correcte. Résume la transcription suivante, n'invente pas de faits, complète si besoin le diagnostic et son traitement au format:
+1. MOTIF DE CONSULTATION
+2. ANAMNÈSE
+3. COMMÉMORATIFS
+4. EXAMEN CLINIQUE
+5. PLAN DIAGNOSTIQUE ET THÉRAPEUTIQUE
+- Hypothèses diagnostiques
+- Traitement réalisé en consultation
+- Traitement prescrit
+- Plan""",
+    "developer": """You are a software development assistant. Analyze the following transcript (technical discussion, standup, or planning meeting) and provide a structured summary.
+
+Format your response EXACTLY as:
+
+## Technical Decisions
+- [decision 1] (or "None identified" if there are none)
+
+## Action Items
+- [task 1 — owner if mentioned] (or "None identified" if there are none)
+
+## Open Questions / Blockers
+- [item 1] (or "None identified" if there are none)""",
+}
 
 
-def get_default_prompt() -> str:
-    return st.secrets.get("SUMMARIZATION_PROMPT", DEFAULT_PROMPT)
+def get_prompt_modes() -> dict[str, str]:
+    """Assistant modes (mode key → prompt). Secrets override/extend the built-ins."""
+    modes = dict(DEFAULT_PROMPTS)
+    configured = st.secrets.get("SUMMARIZATION_PROMPT")
+    if isinstance(configured, str):
+        modes["custom"] = configured  # backward compat with the legacy single-string secret
+    elif configured:
+        modes.update(configured)
+    return modes
 
 
 def get_ui_language() -> str:
@@ -200,14 +241,20 @@ def get_ui_language_label(language_code: str) -> str:
     return tr(f"ui_language_{language_code}")
 
 
-def build_summary_prompt(transcript: str, input_language: str, output_language: str) -> str:
+def get_assistant_mode_label(mode_key: str) -> str:
+    language = get_ui_language()
+    label = TRANSLATIONS.get(language, TRANSLATIONS["fr"]).get(f"assistant_mode_{mode_key}")
+    return label or mode_key.replace("_", " ").title()
+
+
+def build_summary_prompt(base_prompt: str, transcript: str, input_language: str, output_language: str) -> str:
     if input_language == "auto-detected from the transcript":
         transcript_language_instruction = "- The transcript language was auto-detected."
     else:
         transcript_language_instruction = f"- The transcript language is {input_language}."
 
     return (
-        f"{get_default_prompt()}\n\n"
+        f"{base_prompt}\n\n"
         f"Important:\n"
         f"{transcript_language_instruction}\n"
         f"- Write the final summary in {output_language}.\n"
@@ -369,12 +416,12 @@ def transcribe(audio_bytes: bytes, filename: str, model: str, language: str | No
     return transcribe_with_retry(audio_bytes, filename, model, language)
 
 
-def summarize_with_retry(transcript: str, model: str, input_language: str, output_language: str, max_attempts: int | None = None) -> str:
+def summarize_with_retry(transcript: str, model: str, input_language: str, output_language: str, base_prompt: str, max_attempts: int | None = None) -> str:
     keys = get_gemini_keys()
     if max_attempts is None:
         max_attempts = len(keys)
 
-    prompt = build_summary_prompt(transcript, input_language, output_language)
+    prompt = build_summary_prompt(base_prompt, transcript, input_language, output_language)
     last_error: Exception | None = None
 
     for attempt in range(max_attempts):
@@ -409,17 +456,17 @@ def summarize_with_retry(transcript: str, model: str, input_language: str, outpu
     return ""
 
 
-def summarize_with_keepalive(transcript: str, model: str, input_language: str, output_language: str, progress) -> str:
+def summarize_with_keepalive(transcript: str, model: str, input_language: str, output_language: str, base_prompt: str, progress) -> str:
     estimated = max(8.0, len(transcript) / 6000 * 2)
     return run_with_keepalive(
-        summarize_with_retry, transcript, model, input_language, output_language,
+        summarize_with_retry, transcript, model, input_language, output_language, base_prompt,
         progress=progress, estimated_seconds=estimated,
         label=tr("summary_progress"), done_label=tr("summary_done"),
     )
 
 
-def summarize(transcript: str, model: str, input_language: str, output_language: str) -> str:
-    return summarize_with_retry(transcript, model, input_language, output_language)
+def summarize(transcript: str, model: str, input_language: str, output_language: str, base_prompt: str) -> str:
+    return summarize_with_retry(transcript, model, input_language, output_language, base_prompt)
 
 
 def build_download_text(transcript: str, summary: str, with_transcript: bool) -> str:
@@ -435,6 +482,7 @@ def build_processing_key(
     audio_filename: str,
     transcription_language_key: str,
     summary_language_key: str,
+    assistant_mode_key: str,
     compress_enabled: bool,
     groq_model: str,
     gemini_model: str,
@@ -444,6 +492,7 @@ def build_processing_key(
         audio_filename,
         transcription_language_key,
         summary_language_key,
+        assistant_mode_key,
         str(compress_enabled),
         groq_model,
         gemini_model,
@@ -582,6 +631,14 @@ with st.sidebar:
         help=tr("summary_language_help"),
     )
     summary_output_language = SUMMARY_OUTPUT_LANGUAGES.get(summary_language_key, "French")
+    prompt_modes = get_prompt_modes()
+    assistant_mode_key = st.selectbox(
+        tr("assistant_mode_label"),
+        options=list(prompt_modes.keys()),
+        index=0,
+        format_func=get_assistant_mode_label,
+        help=tr("assistant_mode_help"),
+    )
     auto_transcribe = st.checkbox(tr("auto_summarize"), value=True)
     include_transcript = st.checkbox(tr("include_transcript"), value=False)
     compress_enabled = st.checkbox(
@@ -640,6 +697,7 @@ if audio_ready:
         audio_filename,
         transcription_language_key,
         summary_language_key,
+        assistant_mode_key,
         compress_enabled,
         groq_model,
         gemini_model,
@@ -661,7 +719,8 @@ if run and audio_ready:
     original_size = len(audio_bytes)
     requires_audio_extraction = is_video_upload(audio_filename)
     summary_input_language = get_summary_input_language_label(transcription_language_key)
-    log_event("run_started", source=audio_filename, bytes=original_size, drive_connected="credentials" in st.session_state)
+    system_prompt = prompt_modes[assistant_mode_key]
+    log_event("run_started", source=audio_filename, bytes=original_size, mode=assistant_mode_key, drive_connected="credentials" in st.session_state)
 
     if requires_audio_extraction:
         with st.spinner(tr("extract_audio_spinner")):
@@ -713,8 +772,8 @@ if run and audio_ready:
     summary_progress = st.progress(0.0, text=tr("summary_progress"))
     t0 = time.monotonic()
     try:
-        summary = summarize_with_keepalive(transcript, gemini_model, summary_input_language, summary_output_language, summary_progress)
-        log_event("summarize_done", model=gemini_model, input_language=summary_input_language, output_language=summary_output_language, transcript_chars=len(transcript), summary_chars=len(summary or ""), duration_s=round(time.monotonic() - t0, 2))
+        summary = summarize_with_keepalive(transcript, gemini_model, summary_input_language, summary_output_language, system_prompt, summary_progress)
+        log_event("summarize_done", model=gemini_model, mode=assistant_mode_key, input_language=summary_input_language, output_language=summary_output_language, transcript_chars=len(transcript), summary_chars=len(summary or ""), duration_s=round(time.monotonic() - t0, 2))
     except Exception as e:
         summary_progress.empty()
         log_event("summarize_failed", model=gemini_model, input_language=summary_input_language, output_language=summary_output_language, error=str(e)[:300], duration_s=round(time.monotonic() - t0, 2))
