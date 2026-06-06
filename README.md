@@ -28,7 +28,7 @@ The CLI reads from environment variables; the Streamlit app reads from `.streaml
 |---|---|---|
 | `GROQ_API_KEY` | CLI + Streamlit | Groq Whisper transcription |
 | `GEMINI_API_KEY` | CLI + Streamlit | Gemini summarization. Accepts a single string or an **array of keys** for automatic quota rotation |
-| `SUMMARIZATION_PROMPT` | Streamlit (optional) | Assistant modes as a `[table]` of *mode → prompt*; overrides/extends the built-in `general` / `veterinarian` / `developer` modes. A legacy single string still works and appears as a `custom` mode |
+| `SUMMARIZATION_PROMPT` | Streamlit (optional) | Assistant modes as a `[table]` of *mode → prompt* (the selectable modes). If unset, a single built-in `general` default is used. A legacy single string still works and appears as a `custom` mode |
 | `GOOGLE_CLIENT_ID` | Streamlit (optional) | OAuth client ID for Google Drive sync |
 | `GOOGLE_CLIENT_SECRET` | Streamlit (optional) | OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | Streamlit (optional) | OAuth redirect URI registered in Google Cloud console |
@@ -52,11 +52,22 @@ GOOGLE_CLIENT_SECRET = "..."
 GOOGLE_REDIRECT_URI = "https://your-app.streamlit.app/"
 
 # Optional — assistant modes for the "Assistant type" selector.
-# Overrides/extends the built-in mode.
-# A TOML table must be the LAST thing in the file (otherwise the keys above
-# get absorbed into it).
+# Every selectable mode lives here (first key = default selection); if you set
+# none, a single built-in "general" default is used. Use """triple quotes"""
+# for multi-line prompts. The table must be the LAST thing in the file
+# (otherwise the keys above get absorbed into it).
 [SUMMARIZATION_PROMPT]
-veterinarian = "Tu es docteur vétérinaire. Utilise la terminologie médicale française correcte..."
+general = """You are a meeting/lecture assistant. Summarize the transcript.
+
+## Key Elements
+- [point 1]
+
+## Action Items
+- [item 1] (or "None identified")
+
+## Decisions Made
+- [decision 1] (or "None identified")"""
+veterinarian = "Tu es docteur vétérinaire. Résume la consultation et propose un diagnostic..."
 developer = "You are a software development assistant. Summarize this technical discussion..."
 ```
 
@@ -85,7 +96,7 @@ Open the local URL in your browser, record or upload audio, and the summary will
 | **Interface language** | Français | Switch the entire app UI between French and English |
 | **Recording language** | Auto-detect | Language hint sent to Whisper. |
 | **Summary language** | Français | Language Gemini uses to write the summary. |
-| **Assistant type** | General assistant | Which summarization prompt to apply — general, or any custom mode from `secrets.toml` |
+| **Assistant type** | First mode in secrets | Which summarization prompt to apply — the modes you define in `secrets.toml` (a single `general` default if none) |
 | **Summarize automatically** | ✅ on | Start transcription + summary as soon as audio is captured |
 | **Include transcript in file** | ☐ off | Add the full transcript to the downloaded / Drive-saved file |
 | **Compress audio** | ✅ on | Transcode audio ≥ 5 MB to mono 16 kHz Opus via `ffmpeg` before sending to Groq |
@@ -112,7 +123,7 @@ Models (Groq `whisper-large-v3-turbo`, Gemini `gemini-2.5-flash`) are fixed and 
 - **Rate-limit retry.** Groq calls retry with exponential backoff on `RateLimitError`, honoring the `Retry-After` header.
 - **Gemini key rotation.** Quota errors rotate to the next key globally for all subsequent requests.
 - **Google Drive sync.** Optional OAuth flow saves summaries to a `Speech2Summary` folder on Drive and exposes a download history panel.
-- **Assistant modes.** A sidebar **Assistant type** selector switches the summarization prompt between built-in modes (general, veterinarian, developer). Add or override modes by setting `SUMMARIZATION_PROMPT` as a `[table]` of *mode → prompt* in `secrets.toml`; a legacy single string still works as a `custom` mode.
+- **Assistant modes.** A sidebar **Assistant type** selector switches the summarization prompt between the modes you define in `secrets.toml` as a `[table]` of *mode → prompt* (e.g. general, veterinarian, developer). If none are configured, a single built-in `general` default is used; a legacy single string appears as a `custom` mode.
 
 ### Usage tracing
 
