@@ -4,3 +4,9 @@ google-genai
 google-api-python-client
 google-auth
 google-auth-oauthlib
+pillow
+numpy
+pydicom
+pylibjpeg
+pylibjpeg-libjpeg
+pylibjpeg-openjpeg

@@ -309,6 +309,9 @@ with col_btn:
     st.write("")  # alignement vertical
     btn_nouveau = st.empty()
 
+if st.button("🐾 Radiologie vétérinaire"):
+    st.switch_page("pages/2_🐾_Radiologie.py")
+
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
 
@@ -378,6 +381,14 @@ else:
 
 if run and audio_ready:
     original_size = len(audio_bytes)
+    if original_size < 2000:  # not a real recording (e.g. an iCloud placeholder / empty file)
+        log_event("audio_too_small", source=audio_filename, bytes=original_size)
+        st.error(
+            f"Le fichier audio semble vide ou incomplet ({original_size} octets) — il ne contient pas de son exploitable. "
+            "Sur iPhone, un mémo stocké sur iCloud peut n'être qu'un fichier témoin : ouvrez l'enregistrement pour qu'il "
+            "se télécharge entièrement, puis « Partager → Enregistrer dans Fichiers » et téléversez ce fichier."
+        )
+        st.stop()
     log_event("run_started", source=audio_filename, bytes=original_size, drive_connected="credentials" in st.session_state)
 
     if compress_enabled and len(audio_bytes) >= COMPRESS_THRESHOLD_BYTES:
