@@ -39,8 +39,10 @@ st.title("Assistant Radiologie Vétérinaire")
 st.caption("Téléversez une ou plusieurs vues d'une même étude (DICOM / JPG / PNG) → brouillon de compte rendu structuré")
 st.warning(xray.DISCLAIMER)
 
-if st.button("🎧 Mon Assistant Perso (audio)"):
-    st.switch_page("streamlit_app.py")
+_, col_btn = st.columns([4, 1])
+with col_btn:
+    if st.button("🎧 Assistant Audio", use_container_width=True):
+        st.switch_page("streamlit_app.py")
 
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0

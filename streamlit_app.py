@@ -41,7 +41,7 @@ SUMMARY_OUTPUT_LANGUAGES = {
 TRANSLATIONS = {
     "fr": {
         "page_title": "Speech2Summary",
-        "app_title": "Mon Assistant Perso",
+        "app_title": "Assistant Audio",
         "app_caption": "Enregistrez ou téléversez un fichier audio → transcription → création d'un résumé structuré",
         "settings_header": "Paramètres",
         "ui_language_label": "Langue de l'interface",
@@ -106,7 +106,7 @@ TRANSLATIONS = {
     },
     "en": {
         "page_title": "Speech2Summary",
-        "app_title": "My Personal Assistant",
+        "app_title": "Audio Assistant",
         "app_caption": "Record or upload an audio file → transcription → structured summary generation",
         "settings_header": "Settings",
         "ui_language_label": "Interface language",
@@ -576,8 +576,10 @@ with col_btn:
     st.write("")  # alignement vertical
     btn_nouveau = st.empty()
 
-if st.button("🐾 Radiologie vétérinaire"):
-    st.switch_page("pages/2_🐾_Radiologie.py")
+_, col_btn = st.columns([4, 1])
+with col_btn:
+    if st.button("🐾 Radiologie vétérinaire"):
+        st.switch_page("pages/2_🐾_Radiologie.py")
 
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
