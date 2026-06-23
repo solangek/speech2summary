@@ -41,7 +41,7 @@ SUMMARY_OUTPUT_LANGUAGES = {
 TRANSLATIONS = {
     "fr": {
         "page_title": "Speech2Summary",
-        "app_title": "Mon Assistant Perso",
+        "app_title": "Assistant Audio",
         "app_caption": "Enregistrez ou téléversez un fichier audio → transcription → création d'un résumé structuré",
         "settings_header": "Paramètres",
         "ui_language_label": "Langue de l'interface",
@@ -106,7 +106,7 @@ TRANSLATIONS = {
     },
     "en": {
         "page_title": "Speech2Summary",
-        "app_title": "My Personal Assistant",
+        "app_title": "Audio Assistant",
         "app_caption": "Record or upload an audio file → transcription → structured summary generation",
         "settings_header": "Settings",
         "ui_language_label": "Interface language",
@@ -576,6 +576,11 @@ with col_btn:
     st.write("")  # alignement vertical
     btn_nouveau = st.empty()
 
+_, col_btn = st.columns([4, 1])
+with col_btn:
+    if st.button("🐾 Radiologie vétérinaire"):
+        st.switch_page("pages/2_🐾_Radiologie.py")
+
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
 
@@ -585,6 +590,14 @@ rk = st.session_state.reset_key
 
 with st.sidebar:
     st.header(tr("settings_header"))
+    prompt_modes = get_prompt_modes()
+    assistant_mode_key = st.selectbox(
+        tr("assistant_mode_label"),
+        options=list(prompt_modes.keys()),
+        index=0,
+        format_func=get_assistant_mode_label,
+        help=tr("assistant_mode_help"),
+    )
     st.selectbox(
         tr("ui_language_label"),
         options=UI_LANGUAGE_OPTIONS,
@@ -609,21 +622,10 @@ with st.sidebar:
         help=tr("summary_language_help"),
     )
     summary_output_language = SUMMARY_OUTPUT_LANGUAGES.get(summary_language_key, "French")
-    prompt_modes = get_prompt_modes()
-    assistant_mode_key = st.selectbox(
-        tr("assistant_mode_label"),
-        options=list(prompt_modes.keys()),
-        index=0,
-        format_func=get_assistant_mode_label,
-        help=tr("assistant_mode_help"),
-    )
     auto_transcribe = st.checkbox(tr("auto_summarize"), value=True)
     include_transcript = st.checkbox(tr("include_transcript"), value=False)
-    compress_enabled = st.checkbox(
-        tr("compress_audio"),
-        value=True,
-        help=tr("compress_audio_help"),
-    )
+    _compress_flag = st.secrets.get("ENABLE_AUDIO_COMPRESSION", True)
+    compress_enabled = _compress_flag if isinstance(_compress_flag, bool) else str(_compress_flag).lower() == "true"
     drive_configured = all(k in st.secrets for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
     if drive_configured:
         st.divider()
