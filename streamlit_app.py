@@ -590,6 +590,14 @@ rk = st.session_state.reset_key
 
 with st.sidebar:
     st.header(tr("settings_header"))
+    prompt_modes = get_prompt_modes()
+    assistant_mode_key = st.selectbox(
+        tr("assistant_mode_label"),
+        options=list(prompt_modes.keys()),
+        index=0,
+        format_func=get_assistant_mode_label,
+        help=tr("assistant_mode_help"),
+    )
     st.selectbox(
         tr("ui_language_label"),
         options=UI_LANGUAGE_OPTIONS,
@@ -614,21 +622,10 @@ with st.sidebar:
         help=tr("summary_language_help"),
     )
     summary_output_language = SUMMARY_OUTPUT_LANGUAGES.get(summary_language_key, "French")
-    prompt_modes = get_prompt_modes()
-    assistant_mode_key = st.selectbox(
-        tr("assistant_mode_label"),
-        options=list(prompt_modes.keys()),
-        index=0,
-        format_func=get_assistant_mode_label,
-        help=tr("assistant_mode_help"),
-    )
     auto_transcribe = st.checkbox(tr("auto_summarize"), value=True)
     include_transcript = st.checkbox(tr("include_transcript"), value=False)
-    compress_enabled = st.checkbox(
-        tr("compress_audio"),
-        value=True,
-        help=tr("compress_audio_help"),
-    )
+    _compress_flag = st.secrets.get("ENABLE_AUDIO_COMPRESSION", True)
+    compress_enabled = _compress_flag if isinstance(_compress_flag, bool) else str(_compress_flag).lower() == "true"
     drive_configured = all(k in st.secrets for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
     if drive_configured:
         st.divider()
