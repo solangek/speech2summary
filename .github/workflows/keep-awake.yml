@@ -18,11 +18,15 @@ jobs:
       - name: Ping the app
         run: |
           echo "Pinging Streamlit app..."
-          # -f  : fail (non-zero exit) on HTTP errors like 4xx/5xx
           # -s  : silent (no progress bar)
           # -S  : still show errors when silent
-          # -L  : follow redirects
           # --retry: retry transient failures a few times
-          curl -fsSL --retry 3 --retry-delay 10 \
+          # NOTE: no -L (don't follow redirects). Streamlit answers a
+          #   sleeping app with a 303 that loops back on itself; following
+          #   it hits curl's 50-redirect cap and fails with exit 47. The
+          #   request itself is enough to reset the inactivity timer.
+          # NOTE: no -f either, so a 3xx wake-up redirect isn't treated as
+          #   an error. We ping the health endpoint, which returns 200.
+          curl -sS --retry 3 --retry-delay 10 \
             -o /dev/null -w "HTTP %{http_code} in %{time_total}s\n" \
-            "https://speech2summary-gk.streamlit.app/"
+            "https://speech2summary-gk.streamlit.app/_stcore/health"
