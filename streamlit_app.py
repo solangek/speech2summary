@@ -20,7 +20,7 @@ from googleapiclient.http import MediaInMemoryUpload
 from groq import Groq, RateLimitError
 
 GROQ_MODELS = ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"]
-GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash"]
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 UPLOAD_TYPES = ["wav", "mp3", "m4a", "m4v", "ogg", "flac", "webm"]
 VIDEO_EXTENSIONS = {".m4v"}

@@ -58,7 +58,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Record, transcribe, and summarize speech")
     parser.add_argument("--output", default="~/summaries/", help="Output directory (default: ~/summaries/)")
     parser.add_argument("--groq-model", default="whisper-large-v3-turbo", help="Groq transcription model")
-    parser.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini summarization model")
+    parser.add_argument("--gemini-model", default="gemini-flash-latest", help="Gemini summarization model")
     parser.add_argument("--no-compress", action="store_true", help="Skip ffmpeg Opus compression before transcription")
     parser.add_argument("--log-file", help="Append JSON usage events to this file in addition to stderr")
     return parser.parse_args()

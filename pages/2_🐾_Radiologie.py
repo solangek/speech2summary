@@ -12,7 +12,7 @@ from google.oauth2.credentials import Credentials
 import common
 import xray
 
-GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-pro", "gemini-2.0-flash"]
 DRIVE_FOLDER = "VetXrayReports"
 MAX_VIEWS = 6  # cap views per study to bound cost/latency
 

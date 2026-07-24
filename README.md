@@ -102,7 +102,7 @@ Open the local URL in your browser, record or upload audio, and the summary will
 | **Compress audio** | ✅ on | Transcode audio ≥ 5 MB to mono 16 kHz Opus via `ffmpeg` before sending to Groq |
 | **Connect Google Drive** | — | OAuth button, only visible when `GOOGLE_*` secrets are configured |
 
-Models (Groq `whisper-large-v3-turbo`, Gemini `gemini-2.5-flash`) are fixed and not exposed in the UI.
+Models (Groq `whisper-large-v3-turbo`, Gemini `gemini-flash-latest`) are fixed and not exposed in the UI.
 
 ### Supported audio / video upload formats
 
@@ -146,7 +146,7 @@ python3 main.py
 |---|---|---|
 | `--output` | `~/summaries/` | Directory where `.txt` summaries are saved |
 | `--groq-model` | `whisper-large-v3-turbo` | Groq transcription model |
-| `--gemini-model` | `gemini-2.5-flash` | Gemini summarization model |
+| `--gemini-model` | `gemini-flash-latest` | Gemini summarization model |
 
 The CLI requires `numpy`, `sounddevice`, and `soundfile` (not in `requirements.txt`):
 
